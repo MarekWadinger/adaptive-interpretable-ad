@@ -65,11 +65,6 @@ def process_limits_streaming(
         df: pd.DataFrame):
     model = GaussianScorer()
     model_inv = GaussianScorer()
-
-    anomaly_samples = []
-    anomaly_samples_ = []
-    list_thresh_pos = []
-    list_thresh_neg = []
     
     df = df[col]
     with open('data.json', 'a') as f:
@@ -77,27 +72,30 @@ def process_limits_streaming(
             is_anomaly, real_thresh = model.process_one(x, t)
             is_anomaly_, real_thresh_ = model_inv.process_one(-x, t)
             
-            dict_ = {str(t): [is_anomaly, real_thresh, real_thresh_]}
+            dict_ = {'time':str(t),
+                     'anomaly':is_anomaly,
+                     'level_high':real_thresh, 
+                     'level_low':real_thresh_}
             print(json.dumps(dict_), file=f)
-            
-            anomaly_samples.append(is_anomaly)
-            anomaly_samples_.append(is_anomaly_)
-            list_thresh_pos.append(real_thresh)
-            list_thresh_neg.append(real_thresh_)
-            
-    text = (f"Sliding window: {model.period}\n"
-        f"Proportion of anomalous samples: "
-        f"{sum(anomaly_samples)/len(anomaly_samples)*100:.02f}%\n"
-        f"Total number of anomalous events: "
-        f"{sum(pd.Series(anomaly_samples).diff().dropna() == 1)}")
-    print(text) 
-
+    
+    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument("-f", help="File to read. If none MQTT is used.", default='average_temperature.csv')
     parser.add_argument("-signal", help="Topic of MQTT or Column of pd.DataFrame", default='Average Cell Temperature')
     args = parser.parse_args()
     
-    df = pd.read_csv('average_temperature.csv', index_col=0)
+    if args.f:
+        df = pd.read_csv(args.f, index_col=0)
     df.index = pd.to_datetime(df.index)
     col = args.signal
     process_limits_streaming(col, df)
+    
+    # Print summary
+    d = pd.read_json('data.json', lines=True)        
+    text = (
+        f"Proportion of anomalous samples: "
+        f"{sum(d['anomaly'])/len(d['anomaly'])*100:.02f}%\n"
+        f"Total number of anomalous events: "
+        f"{sum(pd.Series(d['anomaly']).diff().dropna() == 1)}")
+    print(text) 
