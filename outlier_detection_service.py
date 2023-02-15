@@ -1,10 +1,12 @@
 # IMPORTS
 import argparse
+import time
 import json
 import datetime as dt
 import pandas as pd
 from scipy.stats import norm
 from river import anomaly
+from streamz import Stream
 
 
 # CONSTANTS
@@ -83,7 +85,8 @@ def preprocess(
 def fit_transform(
         x, 
         model, 
-        model_inv):
+        model_inv
+        ):
     # TODO: replace x_ for multidimensional implementation
     x_ = next(iter(x['data'].values()))
     is_anomaly, real_thresh = model.process_one(x_, x['time'])
@@ -95,18 +98,25 @@ def fit_transform(
             }
 
 
+def dump_to_file(x, f):
+    print(json.dumps(x), file=f)
+
+
 def process_limits_streaming(
         col: str,
         df: pd.DataFrame):
     model = GaussianScorer()
     model_inv = GaussianScorer()
     
-    with open('data.json', 'a') as f:
-        for t, x in df.iterrows():
-            data = preprocess(x, col)
-            dict_ = fit_transform(data, model, model_inv)
-            print(json.dumps(dict_), file=f)
+    source = Stream.from_iterable(df.iterrows())
+    detector = source.map(preprocess, col).map(fit_transform, model, model_inv)
     
+    with open('data.json', 'a') as f:
+        detector.sink(dump_to_file, f)
+        source.start()
+        time.sleep(20)
+        source.stop()
+
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -119,7 +129,7 @@ if __name__ == '__main__':
     df.index = pd.to_datetime(df.index)
     col = args.signal
     process_limits_streaming(col, df)
-    
+
     # Print summary
     d = pd.read_json('data.json', lines=True)
     text = (
