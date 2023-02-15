@@ -60,22 +60,51 @@ class GaussianScorer(anomaly.GaussianScorer):
         return is_anomaly, real_thresh
 
 # FUNCTIONS
+def preprocess(
+        x,
+        col):
+    col = [col] if not isinstance(col, list) else col
+    if isinstance(x, (pd.Series)):    
+        return {'time': x.name,
+                'data': x[col].to_dict()
+        }
+    elif isinstance(x, tuple) and isinstance(x[1], (pd.Series)):
+        return {'time': x[0],
+                'data': x[1][col].to_dict()
+        }
+    elif isinstance(x, dict):
+        return  {k: v for k, v in x.items() if k in col} 
+    elif isinstance(x, paho.mqtt.client.MQTTMessage):
+        return {'time': x.timestamp,
+                'data': {x.topic.split("/")[-1]: float(x.payload)}
+        }
+
+
+def fit_transform(
+        x, 
+        model, 
+        model_inv):
+    # TODO: replace x_ for multidimensional implementation
+    x_ = next(iter(x['data'].values()))
+    is_anomaly, real_thresh = model.process_one(x_, x['time'])
+    is_anomaly_, real_thresh_ = model_inv.process_one(-x_, x['time'])
+    return {'time': str(x['time']),
+            'anomaly':is_anomaly,
+            'level_high':real_thresh, 
+            'level_low':real_thresh_
+            }
+
+
 def process_limits_streaming(
         col: str,
         df: pd.DataFrame):
     model = GaussianScorer()
     model_inv = GaussianScorer()
     
-    df = df[col]
     with open('data.json', 'a') as f:
-        for t, x in df.items():
-            is_anomaly, real_thresh = model.process_one(x, t)
-            is_anomaly_, real_thresh_ = model_inv.process_one(-x, t)
-            
-            dict_ = {'time':str(t),
-                     'anomaly':is_anomaly,
-                     'level_high':real_thresh, 
-                     'level_low':real_thresh_}
+        for t, x in df.iterrows():
+            data = preprocess(x, col)
+            dict_ = fit_transform(data, model, model_inv)
             print(json.dumps(dict_), file=f)
     
     
@@ -92,7 +121,7 @@ if __name__ == '__main__':
     process_limits_streaming(col, df)
     
     # Print summary
-    d = pd.read_json('data.json', lines=True)        
+    d = pd.read_json('data.json', lines=True)
     text = (
         f"Proportion of anomalous samples: "
         f"{sum(d['anomaly'])/len(d['anomaly'])*100:.02f}%\n"
