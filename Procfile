@@ -1,0 +1,1 @@
+worker: python dynamic_signal_limits_service.py -u "mqtt.cloud.uiam.sk" -t "shellies/Shelly3EM-Main-Switchboard-C/emeter/0/power"

@@ -2,18 +2,17 @@
 import argparse
 import datetime as dt
 import json
+import os
+import signal
+import sys
 import time
 import warnings
 
-import signal
-import sys
-import os
-
-import pandas as pd
-from scipy.stats import norm
-from river import anomaly
-from streamz import Stream
 from paho.mqtt.client import MQTTMessage
+import pandas as pd
+from river import anomaly
+from scipy.stats import norm
+from streamz import Stream
 
 # CONSTANTS
 THRESHOLD = 0.99735
@@ -111,8 +110,13 @@ def dump_to_file(x, f):
     print(json.dumps(x), file=f)
 
 
-def print_summary():
-    return
+def print_summary(df):
+    text = (
+            f"Proportion of anomalous samples: "
+            f"{sum(df['anomaly'])/len(df['anomaly'])*100:.02f}%\n"
+            f"Total number of anomalous events: "
+            f"{sum(pd.Series(df['anomaly']).diff().dropna() == 1)}")
+    print(text) 
 
 
 def signal_handler(sig, frame, source, f):
@@ -124,12 +128,7 @@ def signal_handler(sig, frame, source, f):
     # Print summary
     d = pd.read_json("data.json", lines=True)
     if not d.empty:
-        text = (
-            f"Proportion of anomalous samples: "
-            f"{sum(d['anomaly'])/len(d['anomaly'])*100:.02f}%\n"
-            f"Total number of anomalous events: "
-            f"{sum(pd.Series(d['anomaly']).diff().dropna() == 1)}")
-        print(text) 
+        print_summary(d)
     else:
         print("No data retrieved")
     
