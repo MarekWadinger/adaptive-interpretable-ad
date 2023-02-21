@@ -10,7 +10,7 @@ import warnings
 
 from paho.mqtt.client import MQTTMessage
 import pandas as pd
-from river import anomaly
+from river import utils, proba, anomaly
 from scipy.stats import norm
 from streamz import Stream
 
@@ -19,14 +19,24 @@ THRESHOLD = 0.99735
 GRACE_PERIOD=60*24
 WINDOW = dt.timedelta(hours=24*7)
 
-# DEFINITIONS
-class GaussianScorer(anomaly.GaussianScorer):
+# DEFINITIONS  
+class GaussianScorer(anomaly.base.SupervisedAnomalyDetector):
     def __init__(self, 
                  threshold=THRESHOLD, 
                  window_size=None, 
                  period=WINDOW, 
                  grace_period=GRACE_PERIOD):
-        super().__init__(window_size, period, grace_period)
+        self.window_size = window_size
+        self.period = period
+        if window_size:
+            self.gaussian = utils.Rolling(proba.Gaussian(), 
+                                          window_size=self.window_size)
+        elif period:
+            self.gaussian = utils.TimeRolling(proba.Gaussian(), 
+                                          period=self.period)
+        else:
+            self.gaussian = proba.Gaussian()
+        self.grace_period = grace_period
         self.threshold = threshold
         
     def learn_one(self, x, **kwargs):
@@ -99,7 +109,7 @@ def fit_transform(
     is_anomaly, real_thresh = model.process_one(x_, x["time"])
     _, real_thresh_ = model_inv.process_one(-x_, x["time"])
     return {"time": str(x["time"]),
-            **x["data"],
+            #**x["data"], # Comment out to lessen the size of payload
             "anomaly":is_anomaly,
             "level_high":real_thresh, 
             "level_low":-real_thresh_
@@ -152,7 +162,10 @@ def process_limits_streaming(
     detector = source.map(preprocess, topic).map(fit_transform, model, model_inv)
         
     with open("data.json", 'a') as f:
-        detector.sink(dump_to_file, f)
+        if isinstance(data, str):
+            detector.map(lambda x: json.dumps(x)).to_mqtt(data, port, f"{topic.rsplit('/', 1)[0]}/dynamic_limits")
+        elif isinstance(data, pd.DataFrame):
+            detector.sink(dump_to_file, f)
         source.start()
         
         signal.signal(signal.SIGINT, lambda signalnum, frame: signal_handler(signalnum, frame, source, f))
