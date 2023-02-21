@@ -161,7 +161,7 @@ def process_limits_streaming(
     
     detector = source.map(preprocess, topic).map(fit_transform, model, model_inv)
         
-    with open("data.json", 'a') as f:
+    with open("dynamic_limits.json", 'a') as f:
         if isinstance(data, str):
             detector.map(lambda x: json.dumps(x)).to_mqtt(data, port, f"{topic.rsplit('/', 1)[0]}/dynamic_limits")
         elif isinstance(data, pd.DataFrame):
