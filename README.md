@@ -1,9 +1,10 @@
 # Real-Time Outlier Detection with Dynamic Process Limits
-Online outlier detection service for existing real-time infrastructures for low-latency detection and change-point adaptation. 
-The service provides dynamic process limits based on changing environmental conditions and sensors aging. 
 
+Online outlier detection service for existing real-time infrastructures for low-latency detection and change-point adaptation.
+The service provides dynamic process limits based on changing environmental conditions and sensors aging.
 
 The main benefits of the  solution are that it:
+
 * Keeps existing IT infrastructure, saving costs, and does
 not require operator retraining
 * Automates alerting thresholds setup for a high number of
@@ -13,8 +14,10 @@ of process limits
 * Assesses changing environmental conditions and device
 aging
 * Uses self-learning approach on streamed data
+* Support for streaming file, MQTT, Apache Kafka, and Redis
 
 > ![Inverter_Temperature_168_hours_sliding_thresh](https://user-images.githubusercontent.com/50716630/220299639-b3f25288-dac6-428d-9270-6e8125915970.png)
+
 ## ⚡️ Quickstart
 
 Get your hand on the algorithm using this [notebook](https://github.com/MarekWadinger/online_outlier_detection/blob/main/online_outlier_detection.ipynb) to play around with example data.
@@ -63,7 +66,6 @@ The response is the latest date in `data.json`
 Note: You can modify the attributes to retrieve any date:
 
 * `[-d | --date]` date as 'Y-m-d H:M:S'
-
 
 ## 🛠 Installation
 

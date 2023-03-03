@@ -126,6 +126,7 @@ class GaussianScorer(anomaly.base.SupervisedAnomalyDetector):
 def preprocess(
         x,
         col):
+    # File
     if isinstance(x, pd.Series):
         col = [col] if not isinstance(col, list) else col
         return {"time": x.name.tz_localize(None),
@@ -138,13 +139,21 @@ def preprocess(
         }
     elif isinstance(x, dict):
         return  {k: v for k, v in x.items() if k in col} 
+    # MQTT
     elif isinstance(x, MQTTMessage):
         return {"time": dt.datetime.fromtimestamp(x.timestamp).replace(microsecond=0),
                 "data": {x.topic.split("/")[-1]: float(x.payload)}
         }
+    # Kafka
     elif isinstance(x, bytes):
         return {"time": dt.datetime.now().replace(microsecond=0),
                 "data": {col: float(x.decode("utf-8"))}
+        }
+    # Redis
+    elif isinstance(x, tuple) and isinstance(x[2], dict):
+        # Data in temporary format
+        return {"time": dt.datetime.fromtimestamp(int(x[1].split('-')[0])/1000).replace(microsecond=0),
+                "data": {list(x[2].keys())[-1]: float(list(x[2].values())[-1])}
         }
 
 
@@ -211,6 +220,8 @@ def process_limits_streaming(
         source = Stream.from_mqtt(**config, topic=topic)
     elif config.get("bootstrap.servers"):
         source = Stream.from_kafka([topic], {**config, 'group.id': 'detection_service'})
+    elif config.get("redis"):
+        source = Stream.from_redis_streams(topic)
     else:
         raise(RuntimeError("Wrong data format."))
     
@@ -260,6 +271,9 @@ if __name__ == '__main__':
           config_parser.has_option('kafka', 'bootstrap.servers') and
           config_parser.get('kafka', 'bootstrap.servers')):
         config = dict(config_parser['kafka'])
+    elif (config_parser.has_section('redis')):
+        config = dict(config_parser['redis'])
+        config['redis'] = True
     else:
         raise ValueError("Missing configuration.")
 
