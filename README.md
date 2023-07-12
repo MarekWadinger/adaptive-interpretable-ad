@@ -108,7 +108,7 @@ Get your hand on the algorithm using this [notebook](https://github.com/tesla50h
 To start the service, run following line of code in your terminal:
 
 ```bash
-python client.py -t "shellies/Shelly3EM-Main-Switchboard-C/emeter/0/power"
+python rpc_client.py -t "shellies/Shelly3EM-Main-Switchboard-C/emeter/0/power"
 ```
 
 Note: You can modify the source data stream using attributes:
@@ -144,7 +144,7 @@ Received message: {"time": "1970-01-01 03:17:11", "anomaly": "0", "level_high": 
 If you want to stream example dataset use
 
 ```bash
-python client.py -t "Average Cell Temperature"
+python rpc_client.py -t "Average Cell Temperature"
 ```
 
 where your `config.ini` shall contain

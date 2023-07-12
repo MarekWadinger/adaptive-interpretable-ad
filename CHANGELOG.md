@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Update project structure with procedure call convention
-  - dynamic_signal_limits_service.py &rarr; server.py; client.py
+  - dynamic_signal_limits_service.py &rarr; rpc_server.py; rpc_client.py
   - query_signal_limits.py &rarr; consumer.py
 - Moved all notebooks to examples
 - Made consumer.py use config.ini
