@@ -415,5 +415,6 @@ class RpcOutlierDetector(object):
             while True:
                 time.sleep(2)
 
+
 if __name__ == "__main__":
     rpc_server(RpcOutlierDetector(), RPC_ENDPOINT, SENTRY_DSN)
