@@ -51,23 +51,3 @@ jobs:
         genbadge flake8 -o reports/flake8-badge.svg
         genbadge tests -o reports/test-badge.svg
         genbadge coverage -o reports/coverage-badge.svg
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        files: reports/coverage/coverage.xml
-      env:
-        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-    - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v5
-      with:
-        title: "UPDATE: Coverage Badges"
-        body: "Automated update of coverage badges"
-        add-paths: |
-          reports/*.svg
-          reports/**/report/**
-      if: ${{ github.event_name == 'push' }}
-    - name: Enable Pull Request Automerge
-      run: gh pr merge -d --merge --auto "1"
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      if: ${{ github.event_name == 'push' }}
