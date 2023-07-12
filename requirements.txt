@@ -10,3 +10,4 @@ matplotlib==3.7.0
 plotly==5.13.0
 cryptography==41.0.1
 human_security==1.0
+git+https://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@github.com/tesla50hz/t50hz_rpc.git

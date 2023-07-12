@@ -1,9 +1,9 @@
-# Real-Time Outlier Detection with Dynamic Process Limits
+# RPC Outlier Detection with Dynamic Process Limits
 
-[![Python application](https://github.com/MarekWadinger/online_outlier_detection/actions/workflows/python-app.yml/badge.svg)](https://github.com/MarekWadinger/online_outlier_detection/actions/workflows/python-app.yml)
-[![codecov](https://codecov.io/gh/MarekWadinger/online_outlier_detection/branch/main/graph/badge.svg?token=BIS0A7CF1F)](https://codecov.io/gh/MarekWadinger/online_outlier_detection)
-[![Test Status](/reports/test-badge.svg)](https://htmlpreview.github.io/?https://github.com/MarekWadinger/online_outlier_detection/blob/main/reports/junit/report/index.html)
-[![Flake8 Status](/reports/flake8-badge.svg)](https://htmlpreview.github.io/?https://github.com/MarekWadinger/online_outlier_detection/blob/main/reports/flake8/report/index.html)
+[![Python application](https://github.com/tesla50hz/rpc_online_outlier_detection/actions/workflows/python-app.yml/badge.svg)](https://github.com/tesla50hz/rpc_online_outlier_detection/actions/workflows/python-app.yml)
+[![Test Status](/reports/coverage-badge.svg)](https://htmlpreview.github.io/?https://github.com/tesla50hz/rpc_online_outlier_detection/blob/main/reports/coverage/report/index.html)
+[![Test Status](/reports/test-badge.svg)](https://htmlpreview.github.io/?https://github.com/tesla50hz/rpc_online_outlier_detection/blob/main/reports/junit/report/index.html)
+[![Flake8 Status](/reports/flake8-badge.svg)](https://htmlpreview.github.io/?https://github.com/tesla50hz/rpc_online_outlier_detection/blob/main/reports/flake8/report/index.html)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8128206.svg)](https://doi.org/10.5281/zenodo.8128206)
 
 Online outlier detection service for existing real-time infrastructures for low-latency detection and change-point adaptation.
@@ -23,9 +23,83 @@ aging
 
 ![Average_Cell_Temperature_sliding_thresh](https://github.com/MarekWadinger/online_outlier_detection/assets/50716630/427586d8-9858-4cf2-9aaa-1ee5407416bd)
 
+## RPC endpoint string
+
+`rpc_online_outlier_detection`
+
+Maintainer: insert your T50Hz email address here
+
+## Usage
+
+### Install/upgrade the `t50hz_rpc` module
+
+```bash
+pip install --upgrade git+https://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@github.com/tesla50hz/t50hz_rpc.git
+```
+
+### Instantiate the client
+
+```python
+from t50hz_rpc import rpc_client
+
+client = rpc_client("rpc_online_outlier_detection")
+```
+
+## 🛠 Installation (Piku)
+
+Make sure you have the Piku server set up in your `~/.ssh/config` file:
+
+```config
+Host piku.aws
+     User piku
+     HostName piku.cloud.tesla50hz.eu
+     Port 3122
+```
+
+Next, add the Piku remote
+
+```bash
+git remote add piku piku.aws:rpc_online_outlier_detection # Note: replace "rpc_online_outlier_detection" with the actual RPC endpoing string
+```
+
+Finally, to deploy the app to Piku, run:
+
+```bash
+git push piku main
+```
+
+(Replace `main` by `master` if that is how your main branch is called.)
+
+You can then check the status of your service at Piku by
+
+```bash
+ssh piku.aws apps
+```
+
+And you can inspect logs of your service by
+
+```bash
+ssh piku.aws logs rpc_online_outlier_detection # Note: replace "rpc_online_outlier_detection" with the actual RPC endpoing string
+```
+
+## 🛠 Installation (local development)
+
+```bash
+python -m venv .env
+source .env/bin/activate
+pip install -r requirements.txt
+```
+
+Then start the server in one terminal, and the client in another:
+
+```bash
+python3 rpc_server.py
+python3 rpc_client.py
+```
+
 ## ⚡️ Quickstart
 
-Get your hand on the algorithm using this [notebook](https://github.com/MarekWadinger/online_outlier_detection/blob/main/examples/01_univariate_pc_2023.ipynb) and play around with example data.
+Get your hand on the algorithm using this [notebook](https://github.com/tesla50hz/rpc_online_outlier_detection/blob/main/examples/01_univariate_pc_2023.ipynb) and play around with example data.
 
 ## 🏃 Run the services
 
@@ -100,19 +174,11 @@ Note: You can modify the attributes to retrieve thrasholds at any date:
 
 * `[-d | --date]` date as 'Y-m-d H:M:S'
 
-## 🛠 Installation
-
-```bash
-python -m venv .env
-source .env/bin/activate
-pip install -r requirements.txt
-```
-
 ## 👐 Contributing
 
 Feel free to contribute in any way you like, we're always open to new ideas and approaches.
 
-* Feel welcome to [open an issue](https://github.com/MarekWadinger/online_outlier_detection/issues/new/choose) if you think you've spotted a bug or a performance issue.
+* Feel welcome to [open an issue](https://github.com/tesla50hz/rpc_online_outlier_detection/issues/new/choose) if you think you've spotted a bug or a performance issue.
 
 <!-- 
 ## 🤝 Affiliations

@@ -10,10 +10,16 @@ from paho.mqtt.client import MQTTMessage
 import pandas as pd
 from river import utils, proba
 from streamz import Stream, Sink
+from t50hz_rpc import rpc_server
 
 from functions.anomaly import GaussianScorer
 from functions.encryption import (
     init_rsa_security, sign_data, encrypt_data, decode_data)
+
+
+RPC_ENDPOINT = "rpc_online_outlier_detection"
+SENTRY_DSN = ("https://8226f38527234a818c6cdd0060b05119@o4505471484624896"
+              ".ingest.sentry.io/4505510393806848")
 
 # CONSTANTS
 GRACE_PERIOD = 60*24
@@ -129,7 +135,7 @@ def signal_handler(sig, frame, detector, config):  # pragma: no cover
     exit(0)
 
 
-class OutlierDetector(object):
+class RpcOutlierDetector(object):
     def __init__(self):
         self.stopped = True
 
@@ -152,7 +158,7 @@ class OutlierDetector(object):
         Examples:
         >>> series = pd.Series([1.], name=pd.to_datetime('2023-01-01'),
         ...                    index=["sensor_1"])
-        >>> obj = OutlierDetector()
+        >>> obj = RpcOutlierDetector()
         >>> obj.preprocess(series, 'sensor_1')
         {'time': Timestamp('2023-01-01 00:00:00'), 'data': {'sensor_1': 1.0}}
 
@@ -224,7 +230,7 @@ class OutlierDetector(object):
         >>> model = model = GaussianScorer(
         ...     utils.TimeRolling(proba.Gaussian(), period=WINDOW),
         ...     grace_period=GRACE_PERIOD)
-        >>> obj = OutlierDetector()
+        >>> obj = RpcOutlierDetector()
         >>> result = obj.fit_transform(x, model)
         >>> sorted(result.keys())
         ['anomaly', 'level_high', 'level_low', 'time']
@@ -283,7 +289,7 @@ class OutlierDetector(object):
         ...     "path": "path/to/input/data.csv",
         ...     "data": pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})}
         >>> topic = "test"
-        >>> obj = OutlierDetector()
+        >>> obj = RpcOutlierDetector()
         >>> source = obj.get_source(config, topic)
         >>> type(source)
         <class 'streamz.sources.from_iterable'>
@@ -350,7 +356,7 @@ class OutlierDetector(object):
         Examples:
         >>> config = {"path": "tests/test.csv", "output": "tests/output.json"}
         >>> topic = "A"
-        >>> obj = OutlierDetector()
+        >>> obj = RpcOutlierDetector()
         >>> obj.start(config, topic, key_path=".temp", debug=True)
         === Debugging started... ===
         === Debugging finished with success... ===
@@ -408,3 +414,6 @@ class OutlierDetector(object):
 
             while True:
                 time.sleep(2)
+
+if __name__ == "__main__":
+    rpc_server(RpcOutlierDetector(), RPC_ENDPOINT, SENTRY_DSN)

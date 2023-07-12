@@ -3,7 +3,7 @@
 ## Initialization
 
 ```sh
-git clone https://github.com/MarekWadinger/online_outlier_detection.git
+git clone https://github.com/tesla50hz/rpc_online_outlier_detection.git
 python3 -m venv --upgrade-deps .venv
 source .venv/bin/activate
 cd online_outlier_detection
