@@ -1,6 +1,7 @@
 from t50hz_rpc import rpc_client
 
 from functions.parse import get_argparser, get_config
+from rpc_server import RpcOutlierDetector
 
 RPC_ENDPOINT = "rpc_online_outlier_detection"
 
@@ -13,6 +14,5 @@ if __name__ == '__main__':
 
     config = get_config(args.config_file)
 
-    client = rpc_client(RPC_ENDPOINT)
-
+    client: RpcOutlierDetector = rpc_client(RPC_ENDPOINT)
     client.start(config, args.topic, args.key_path, args.debug)

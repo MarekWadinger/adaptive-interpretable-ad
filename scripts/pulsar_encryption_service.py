@@ -20,9 +20,9 @@ def encryption_service(
     sender, _ = init_rsa_security(".security")
 
     source = Stream.from_pulsar(
+        service_url,
         in_topic,
-        subscription_name=subscription_name,
-        consumer_params={"service_url": service_url})
+        subscription_name=subscription_name)
 
     encrypter = (
         source
@@ -32,8 +32,8 @@ def encryption_service(
 
     if args.out_topic is not None:
         producer = encrypter.to_pulsar(
-            out_topic,
-            producer_config={"service_url": service_url})
+            service_url,
+            out_topic)
         L = None
     else:
         L = encrypter.sink_to_list()
@@ -60,7 +60,7 @@ if __name__ == '__main__':
         nargs='*', type=str)
     parser.add_argument(
         '-o', '--out-topic',
-        default="my-output",
+        default="dynamic_limits",
         help="The topic to produce messages to.",
         type=str)
     parser.add_argument(

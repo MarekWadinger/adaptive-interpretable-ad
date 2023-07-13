@@ -6,16 +6,15 @@ import signal
 import sys
 import time
 
-from paho.mqtt.client import MQTTMessage
 import pandas as pd
-from river import utils, proba
-from streamz import Stream, Sink
+from paho.mqtt.client import MQTTMessage
+from river import proba, utils
+from streamz import Sink, Stream
 from t50hz_rpc import rpc_server
 
 from functions.anomaly import GaussianScorer
-from functions.encryption import (
-    init_rsa_security, sign_data, encrypt_data, decode_data)
-
+from functions.encryption import (decode_data, encrypt_data, init_rsa_security,
+                                  sign_data)
 
 RPC_ENDPOINT = "rpc_online_outlier_detection"
 SENTRY_DSN = ("https://8226f38527234a818c6cdd0060b05119@o4505471484624896"
@@ -311,6 +310,12 @@ class RpcOutlierDetector(object):
         >>> type(source)
         <class 'streamz.sources.from_kafka'>
 
+        >>> config = {"service_url": "pulsar://localhost:6650"}
+        >>> topic = "pulsar-topic"
+        >>> source = obj.get_source(config, topic)
+        >>> type(source)
+        <class 'streamz_pulsar.sources.from_pulsar.from_pulsar'>
+
         >>> config = {"invalid": "config"}
         >>> topic = "test"
         >>> source = obj.get_source(config, topic)  # doctest: +IGNORE_EXCEPTION_DETAIL
@@ -328,9 +333,58 @@ class RpcOutlierDetector(object):
         elif config.get("bootstrap.servers"):
             source = Stream.from_kafka(
                 [topic], {**config, 'group.id': 'detection_service'})
+        elif config.get("service_url"):
+            source = Stream.from_pulsar(
+                config.get("service_url"),
+                [topic],
+                subscription_name='detection_service')
         else:
             raise (RuntimeError("Wrong data format."))
         return source
+
+    def get_sink(
+            self,
+            config: dict,
+            topic: str,
+            detector):
+        """Get the data sink based on the provided configuration.
+
+        Args:
+            config (dict): The configuration dictionary.
+            topic (str): The topic to subscribe to for MQTT or Kafka sources.
+            detector (streamz.core.map): Upstream streamz pipeline.
+
+        Returns:
+            streamz.core.map: streamz pipeline with sink
+        """
+        if config.get("path") and config.get("output"):
+            f = open(config.get("output"), 'a')
+            open_files.append(f)
+            detector.sink(self.dump_to_file, f)
+        elif config.get("host"):  # pragma: no cover
+            topic = f"{topic.rsplit('/', 1)[0]}/dynamic_limits"
+            detector.map(lambda x: json.dumps(x)).to_mqtt(
+                **config, topic=topic, publish_kwargs={"retain": True})
+        # TODO: add coverage test
+        elif config.get("bootstrap.servers"):  # pragma: no cover
+            topic = "dynamic_limits"
+            detector.map(lambda x: (str(x), "dynamic_limits")
+                         ).to_kafka(topic, config)
+        elif config.get("service_url"):  # pragma: no cover
+            topic = "dynamic_limits"
+            from pulsar.schema import JsonSchema, Record, String
+
+            class Example(Record):
+                time = String()
+                anomaly = String()
+                level_high = String()
+                level_low = String()
+            detector.map(lambda x: Example(**x)).to_pulsar(
+                config.get("service_url"),
+                "dynamic_limits",
+                producer_config={"schema": JsonSchema(Example)})
+
+        return detector
 
     def start(
             self,
@@ -383,25 +437,15 @@ class RpcOutlierDetector(object):
                     .map(decode_data)
                     )
 
-        if config.get("path") and config.get("output"):
-            f = open(config.get("output"), 'a')
-            open_files.append(f)
-            detector.sink(self.dump_to_file, f)
-        elif config.get("host"):  # pragma: no cover
-            topic = f"{topic.rsplit('/', 1)[0]}/dynamic_limits"
-            detector.map(lambda x: json.dumps(x)).to_mqtt(
-                **config, topic=topic, publish_kwargs={"retain": True})
-        elif config.get("bootstrap.servers"):  # pragma: no cover
-            topic = "dynamic_limits"
-            detector.map(lambda x: (str(x), "dynamic_limits")
-                         ).to_kafka(topic, config)
+        detector = self.get_sink(config, topic, detector)
 
         # TODO: handle combination of debug and remote broker
         if debug and config.get("path"):
             print("=== Debugging started... ===")
             for row in data.head().iterrows():
                 source.emit(row)
-            f.close()
+            for file in open_files:
+                file.close()
             print("=== Debugging finished with success... ===")
         else:  # pragma: no cover
             source.start()
