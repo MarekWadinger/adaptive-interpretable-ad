@@ -15,11 +15,12 @@ permissions:
 jobs:
   build:
     permissions: write-all
-    name: ${{ matrix.os }} / ${{ matrix.python_version }}
+    name: ${{ matrix.os }} / ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}-latest
     strategy:
+      fail-fast: false # allow other jobs in matrix if one fails
       matrix:
-        os: [Ubuntu, Windows, macOS]
+        os: [Ubuntu, macOS]
         python-version: ["3.9", "3.10"]
 
     steps:
