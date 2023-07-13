@@ -15,10 +15,11 @@ permissions:
 jobs:
   build:
     permissions: write-all
-
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / ${{ matrix.python_version }}
+    runs-on: ${{ matrix.os }}-latest
     strategy:
       matrix:
+        os: [Ubuntu, Windows, macOS]
         python-version: ["3.9", "3.10"]
 
     steps:
@@ -30,6 +31,7 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip' # caching pip dependencies
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
