@@ -10,6 +10,7 @@ from streamz import Stream
 sys.path.insert(1, str(Path(__file__).parent.parent))
 from functions.encryption import (  # noqa: E402
     init_rsa_security, decrypt_data, encode_data)
+from functions.safe_streamz import map  # noqa: E402, F401
 
 
 class Example(Record):
@@ -61,6 +62,9 @@ def decryption_service(
     decrypter.start()
     while True:
         try:
+            if source.stopped:
+                print("Stopping decryption...")
+                break
             if L:
                 print(L.pop(0))
         except pulsar.Interrupted:
@@ -69,6 +73,8 @@ def decryption_service(
                 producer.stop()
                 producer.flush()
             break
+        except Exception as e:
+            raise e
 
 
 if __name__ == '__main__':

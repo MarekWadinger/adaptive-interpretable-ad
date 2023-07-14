@@ -9,6 +9,7 @@ from streamz import Stream
 sys.path.insert(1, str(Path(__file__).parent.parent))
 from functions.encryption import (  # noqa: E402
     init_rsa_security, encrypt_data, decode_data)
+from functions.safe_streamz import map  # noqa: E402, F401
 
 
 def encryption_service(
@@ -41,6 +42,9 @@ def encryption_service(
     encrypter.start()
     while True:
         try:
+            if source.stopped:
+                print("Stopping encryption...")
+                break
             if L:
                 print(L.pop(0))
         except pulsar.Interrupted:
@@ -49,6 +53,8 @@ def encryption_service(
                 producer.stop()
                 producer.flush()
             break
+        except Exception as e:
+            raise e
 
 
 if __name__ == '__main__':

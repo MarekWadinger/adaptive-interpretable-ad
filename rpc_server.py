@@ -15,6 +15,7 @@ from t50hz_rpc import rpc_server
 from functions.anomaly import GaussianScorer
 from functions.encryption import (decode_data, encrypt_data, init_rsa_security,
                                   sign_data)
+from functions.safe_streamz import map  # noqa: E402, F401
 
 RPC_ENDPOINT = "rpc_online_outlier_detection"
 SENTRY_DSN = ("https://8226f38527234a818c6cdd0060b05119@o4505471484624896"
@@ -457,6 +458,8 @@ class RpcOutlierDetector(object):
                 )
 
             while True:
+                if source.stopped:
+                    break
                 time.sleep(2)
 
 
