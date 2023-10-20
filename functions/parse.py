@@ -13,6 +13,8 @@ def get_argparser():  # pragma: no cover
     parser.add_argument('-f', '--config-file', type=FileType('r'),
                         default='config.ini')
     parser.add_argument('-k', '--key-path', help='Path to RSA keys')
+    parser.add_argument('-r', '--recovery-path',
+                        help='Path to store recovery models')
     parser.add_argument("-t", "--topic", nargs='*', type=str,
                         help="Topic of MQTT or Column of pd.DataFrame")
     return parser

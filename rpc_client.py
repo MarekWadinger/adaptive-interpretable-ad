@@ -13,4 +13,9 @@ if __name__ == '__main__':
     config = get_config(args.config_file)
 
     client: RpcOutlierDetector = RpcOutlierDetector()
-    client.start(config, args.topic, args.key_path, args.debug)
+    client.start(
+        config=config,
+        topics=args.topic,
+        key_path=args.key_path,
+        recovery_path=args.recovery_path,
+        debug=args.debug)
