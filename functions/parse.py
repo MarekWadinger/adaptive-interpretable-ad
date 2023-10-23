@@ -1,5 +1,6 @@
 from argparse import ArgumentParser, FileType
 from configparser import ConfigParser
+from typing import Union
 from typing_extensions import TypedDict, NotRequired
 
 from pandas import Timedelta
@@ -89,20 +90,56 @@ def get_params(
         "pulsar": {"service_url": args.service_url},
         "client": None
     }
+    
+    config_struct = {
+        "setup": SetupConfig,
+        "model": ModelConfig,
+        "io": IOConfig,
+        "file": FileClient,
+        "mqtt": MQTTClient,
+        "kafka": KafkaClient,
+        "pulsar": PulsarClient,
+    }
 
     config_parser = ConfigParser()
     config_parser.read_file(args.config_file)
 
-    for k in config:
-        if config_parser.has_section(k):
-            update_dict_if_none(config[k], config_parser[k])
+    def make_valid_type(type_) -> Union[type, None]:
+        if isinstance(type_, type):
+            return type_
+        elif hasattr(type_, "__args__"):
+            # if any([t is type(None) for t in type_.__args__]):
+            #     return type(None)
+            if "NotRequired" in str(type_):
+                return str
+            else:
+                return make_valid_type(type_.__args__[0])
+        else:
+            raise ValueError(f"Invalid type: {type_}")
+
+    args_ = vars(args)
+    config = {}
+    for section, struct in config_struct.items():
+        config[section] = {}
+        for param, type_ in struct.__annotations__.items():
+            type_ = make_valid_type(type_)
+            if args_.get(param) is not None:
+                param_value = args_[param]
+            elif config_parser.has_option(section, param):
+                param_value = config_parser[section][param]
+            else:
+                param_value = None
+
+            if (param_value is not None and param_value != "None" and param_value != ""):
+                config[section][param] = type_(param_value)
+            elif (param_value is None or param_value == "None" or param_value == ""):
+                config[section][param] = None
 
     # Raise an error if multiple or no clients are specified
     active_clients = []
     clients = ["file", "mqtt", "kafka", "pulsar"]
     for client in clients:
         missing_args = any([arg == None for arg in config[client].values()])
-        print(missing_args)
         if missing_args:
             del config[client]
         else:
@@ -114,4 +151,4 @@ def get_params(
     if len(active_clients) == 1:
         config["client"] = config.pop(active_clients[0])
 
-    return args, config
+    return config

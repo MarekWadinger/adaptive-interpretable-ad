@@ -1,6 +1,9 @@
 from typing import Union
 from typing_extensions import TypedDict, NotRequired
 
+from pandas import Timedelta
+
+
 class FileClient(TypedDict):
     path: str
     output: str
@@ -26,9 +29,9 @@ class IOConfig(TypedDict):
 
 class ModelConfig(TypedDict):
     threshold: float
-    t_e: float
-    t_a: float
-    t_g: float
+    t_e: Timedelta
+    t_a: Union[Timedelta, None]
+    t_g: Union[Timedelta, None]
 
 
 class SetupConfig(TypedDict):
