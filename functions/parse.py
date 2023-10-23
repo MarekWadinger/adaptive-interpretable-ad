@@ -1,8 +1,29 @@
 from argparse import ArgumentParser, FileType
 from configparser import ConfigParser
+from typing_extensions import TypedDict, NotRequired
+
+from pandas import Timedelta
+
+from functions.typing_extras import *
+
+class Config(TypedDict):
+    setup: SetupConfig
+    model: ModelConfig
+    io: IOConfig
+    file: NotRequired[FileClient]
+    mqtt: NotRequired[MQTTClient]
+    kafka: NotRequired[KafkaClient]
+    pulsar: NotRequired[PulsarClient]
+    client: Union[FileClient, MQTTClient, KafkaClient, PulsarClient, None]
+
+def update_dict_if_none(dict1, dict2):
+    for key, value in dict2.items():
+        if dict1.get(key) is None:
+            dict1[key] = value
 
 
-def get_argparser():  # pragma: no cover
+def get_params(
+    ) -> Config:  
     """
     Parse command-line arguments and return the parsed namespace object.
 
@@ -10,41 +31,87 @@ def get_argparser():  # pragma: no cover
         Namespace: Parsed command-line arguments.
     """
     parser = ArgumentParser()
-    parser.add_argument('-f', '--config-file', type=FileType('r'),
-                        default='config.ini')
-    parser.add_argument('-k', '--key-path', help='Path to RSA keys')
-    parser.add_argument('-r', '--recovery-path',
+
+    setup_arg_grp = parser.add_argument_group('setup', 'setup related parameters')
+    setup_arg_grp.add_argument(
+        '-f', '--config-file', type=FileType('r'),
+        default='config.ini')
+    setup_arg_grp.add_argument('-r', '--recovery-path',
                         help='Path to store recovery models')
-    parser.add_argument("-t", "--topic", nargs='*', type=str,
+    setup_arg_grp.add_argument('-k', '--key-path', help='Path to RSA keys')
+    setup_arg_grp.add_argument("-d", "--debug",
+                        help="Debug the file using loop as source",
+                        default=False, type=bool)
+
+    model_arg_grp = parser.add_argument_group('model', 'Model related parameters')
+    model_arg_grp.add_argument('--threshold', type=float)
+    model_arg_grp.add_argument('--t-e', type=Timedelta)
+    model_arg_grp.add_argument('--t-a', type=Timedelta)
+    model_arg_grp.add_argument('--t-g', type=Timedelta)
+    
+    # client_arg_grp = parser.add_argument_group('client', 'Client related parameters')
+    io_arg_grp = parser.add_argument_group('io')
+    io_arg_grp.add_argument("-t", "--in-topics", nargs='*', type=str,
                         help="Topic of MQTT or Column of pd.DataFrame")
-    return parser
+    io_arg_grp.add_argument('--out-topics', nargs='*', type=str)
 
+    file_arg_grp = parser.add_argument_group('file client', "File source related parameters")
+    file_arg_grp.add_argument('--path', type=str)
+    file_arg_grp.add_argument('--output', type=int)
 
-def get_config(config_file):  # pragma: no cover
+    mqtt_arg_grp = parser.add_argument_group('mqtt client', "MQTT source related parameters")
+    mqtt_arg_grp.add_argument('--host', type=str)
+    mqtt_arg_grp.add_argument('--port', type=int)
+    
+    kafka_arg_grp = parser.add_argument_group('kafka client', "Kafka source related parameters")
+    kafka_arg_grp.add_argument('--bootstrap-servers', type=str)
+    
+    pulsar_arg_grp = parser.add_argument_group('pulsar client', "Pulsar source related parameters")
+    pulsar_arg_grp.add_argument('--service-url', type=str)
+    
+    args = parser.parse_args()
+
+    config: Config = {
+        "setup": {"recovery_path": args.recovery_path,
+                  "key_path": args.key_path,
+                  "debug": args.debug},
+        "model": {"threshold": args.threshold,
+                    "t_e": args.t_e,
+                    "t_a": args.t_a,
+                    "t_g": args.t_g},
+        "io": {"in_topics": args.in_topics,
+                    "out_topics": args.out_topics},
+        "file": {"path": args.path,
+                    "output": args.output},
+        "mqtt": {"host": args.host,
+                    "port": args.port},
+        "kafka": {"bootstrap_servers": args.bootstrap_servers},
+        "pulsar": {"service_url": args.service_url},
+        "client": None
+    }
+
     config_parser = ConfigParser()
-    config_parser.read_file(config_file)
+    config_parser.read_file(args.config_file)
 
-    if (config_parser.has_option('file', 'path') and
-            config_parser.get('file', 'path') and
-            config_parser.has_option('file', 'output') and
-            config_parser.get('file', 'output')):
-        config = dict(config_parser['file'])
-    elif (config_parser.has_section('mqtt') and
-          config_parser.has_option('mqtt', 'host') and
-          config_parser.has_option('mqtt', 'port') and
-          config_parser.get('mqtt', 'host') and
-          config_parser.get('mqtt', 'port')):
-        config = dict(config_parser['mqtt'])
-        config['port'] = int(config['port'])
-    elif (config_parser.has_section('kafka') and
-          config_parser.has_option('kafka', 'bootstrap.servers') and
-          config_parser.get('kafka', 'bootstrap.servers')):
-        config = dict(config_parser['kafka'])
-    elif (config_parser.has_section('pulsar') and
-          config_parser.has_option('pulsar', 'service_url') and
-          config_parser.get('pulsar', 'service_url')):
-        config = dict(config_parser['pulsar'])
-    else:
-        # TODO: Handle possible errorous scenarios
-        raise ValueError("Missing configuration.")
-    return config
+    for k in config:
+        if config_parser.has_section(k):
+            update_dict_if_none(config[k], config_parser[k])
+
+    # Raise an error if multiple or no clients are specified
+    active_clients = []
+    clients = ["file", "mqtt", "kafka", "pulsar"]
+    for client in clients:
+        missing_args = any([arg == None for arg in config[client].values()])
+        print(missing_args)
+        if missing_args:
+            del config[client]
+        else:
+            active_clients.append(client)
+    if len(active_clients) > 1:
+        raise ValueError(f"Multiple clients specified: {active_clients}")
+    if len(active_clients) == 0:
+        raise ValueError(f"Specify one of the clients: {clients}")
+    if len(active_clients) == 1:
+        config["client"] = config.pop(active_clients[0])
+
+    return args, config
