@@ -18,3 +18,4 @@ pytest==7.4.2
 scipy==1.10.0
 streamz==0.6.4
 streamz_pulsar==0.1.1
+typing_extensions==4.7.1
