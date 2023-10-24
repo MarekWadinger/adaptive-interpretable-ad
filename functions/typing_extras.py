@@ -74,9 +74,14 @@ def istypedinstance(obj, type_):
     """
     for property_name, property_type in type_.__annotations__.items():
         value = obj.get(property_name, None)
-        if "NotRequired" in str(property_type):
+        if (
+                "NotRequired" in str(property_type) or
+                str(type(property_type)) ==
+                "<class 'typing._GenericAlias'>"):
             if hasattr(property_type, "__args__"):
                 property_type = Union[property_type.__args__[0], None]
+            else:
+                property_type = type(None)
         if not isinstance(value, property_type):
             return False
     return True
