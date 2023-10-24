@@ -1,13 +1,19 @@
-from argparse import ArgumentParser, FileType
+from argparse import ArgumentParser, FileType, Namespace
 from configparser import ConfigParser
 from typing import Union
 
 from pandas import Timedelta
 from typing_extensions import NotRequired, TypedDict
 
-from functions.typing_extras import (FileClient, IOConfig, KafkaClient,
-                                     ModelConfig, MQTTClient, PulsarClient,
-                                     SetupConfig)
+from functions.typing_extras import (
+    FileClient,
+    IOConfig,
+    KafkaClient,
+    ModelConfig,
+    MQTTClient,
+    PulsarClient,
+    SetupConfig,
+)
 
 
 class Config(TypedDict):
@@ -21,18 +27,55 @@ class Config(TypedDict):
     client: Union[FileClient, MQTTClient, KafkaClient, PulsarClient, None]
 
 
-def update_dict_if_none(dict1, dict2):
-    for key, value in dict2.items():
-        if dict1.get(key) is None:
-            dict1[key] = value
-
-
-def get_params() -> Config:
-    """
-    Parse command-line arguments and return the parsed namespace object.
+def get_args() -> Namespace:
+    """Parses command line arguments.
 
     Returns:
-        Namespace: Parsed command-line arguments.
+        Namespace: An object containing the parsed arguments.
+
+    Example:
+    >>> import sys
+    >>> # Simulate command line arguments
+    >>> sys.argv = ['program.py', '-f', 'config.ini', '-r', 'recovery_path',
+    ...             '-k', 'key_path', '--threshold', '0.5', '--t-e', '2h',
+    ...             '--t-a', '1d', '--t-g', '3w', '-t', 'topic1', 'topic2',
+    ...             '--out-topics', 'output1', 'output2', '--path', '/data',
+    ...             '--output', '/outs', '--host', 'localhost',
+    ...             '--port', '12345', '--bootstrap-servers', 'kafka-server',
+    ...             '--service-url', 'pulsar-service', '--debug', 'True']
+    >>> args = get_args()
+    >>> args.config_file.name
+    'config.ini'
+    >>> args.recovery_path
+    'recovery_path'
+    >>> args.key_path
+    'key_path'
+    >>> args.debug
+    True
+    >>> args.threshold
+    0.5
+    >>> args.t_e
+    Timedelta('0 days 02:00:00')
+    >>> args.t_a
+    Timedelta('1 days 00:00:00')
+    >>> args.t_g
+    Timedelta('21 days 00:00:00')
+    >>> args.in_topics
+    ['topic1', 'topic2']
+    >>> args.out_topics
+    ['output1', 'output2']
+    >>> args.path
+    '/data'
+    >>> args.output
+    '/outs'
+    >>> args.host
+    'localhost'
+    >>> args.port
+    12345
+    >>> args.bootstrap_servers
+    'kafka-server'
+    >>> args.service_url
+    'pulsar-service'
     """
     parser = ArgumentParser()
 
@@ -63,7 +106,7 @@ def get_params() -> Config:
     file_arg_grp = parser.add_argument_group(
         'file client', "File source related parameters")
     file_arg_grp.add_argument('--path', type=str)
-    file_arg_grp.add_argument('--output', type=int)
+    file_arg_grp.add_argument('--output', type=str)
 
     mqtt_arg_grp = parser.add_argument_group(
         'mqtt client', "MQTT source related parameters")
@@ -80,25 +123,189 @@ def get_params() -> Config:
 
     args = parser.parse_args()
 
-    config: Config = {
-        "setup": {"recovery_path": args.recovery_path,
-                  "key_path": args.key_path,
-                  "debug": args.debug},
-        "model": {"threshold": args.threshold,
-                  "t_e": args.t_e,
-                  "t_a": args.t_a,
-                  "t_g": args.t_g},
-        "io": {"in_topics": args.in_topics,
-               "out_topics": args.out_topics},
-        "file": {"path": args.path,
-                 "output": args.output},
-        "mqtt": {"host": args.host,
-                 "port": args.port},
-        "kafka": {"bootstrap_servers": args.bootstrap_servers},
-        "pulsar": {"service_url": args.service_url},
-        "client": None
-    }
+    return args
 
+
+def get_valid_type(type_) -> type:
+    """
+    Return a valid type from a given type hint.
+
+    This function takes a type hint and returns a valid Python type that
+    can be used to annotate variables and function return types.
+
+    Args:
+        type_ (type or typing hint): The type hint to be converted to a valid
+        type.
+
+    Returns:
+        type: A valid Python type that can be used for type annotations.
+
+    Raises:
+        ValueError: Provided type hint is not valid or cannot be converted.
+
+    Example:
+        >>> get_valid_type(int)
+        <class 'int'>
+        >>> get_valid_type(float)
+        <class 'float'>
+        >>> get_valid_type(str)
+        <class 'str'>
+        >>> get_valid_type(bool)
+        <class 'bool'>
+        >>> get_valid_type(list[int])
+        list[int]
+        >>> get_valid_type(Union[int, float])
+        <class 'int'>
+        >>> from typing import Optional
+        >>> get_valid_type(Optional[str])
+        <class 'str'>
+        >>> get_valid_type(Union[Timedelta, None])
+        <class 'pandas._libs.tslibs.timedeltas.Timedelta'>
+        >>> get_valid_type(NotRequired[dict[str, int]])
+        <class 'str'>
+        >>> get_valid_type(tuple[int, str])
+        tuple[int, str]
+        >>> get_valid_type(list[Union[int, str]])
+        list[typing.Union[int, str]]
+        >>> get_valid_type(list[NotRequired[Union[int, str]]])
+        list[typing_extensions.NotRequired[typing.Union[int, str]]]
+        >>> get_valid_type(None)
+        Traceback (most recent call last):
+        ...
+        ValueError: Invalid type: None
+    """
+    if isinstance(type_, type):
+        return type_
+    elif hasattr(type_, "__args__"):
+        # if any([t is type(None) for t in type_.__args__]):
+        #     return type(None)
+        if "NotRequired" in str(type_):
+            return str
+        else:
+            return get_valid_type(type_.__args__[0])
+    else:
+        raise ValueError(f"Invalid type: {type_}")
+
+
+def get_valid_client(config: Config) -> Config:
+    """
+    Check the validity of the specified client configuration in the given
+    'config'.
+
+    The 'config' dictionary contains configuration information for different
+    client types such as 'file', 'mqtt', 'kafka', and 'pulsar'. This function
+    checks if one and only one client type is specified, and moves the client
+    configuration into the 'client' key in 'config'.
+
+    Args:
+        config (Dict): A dictionary containing configuration information fo
+        different client types.
+
+    Raises:
+        ValueError: If multiple or no clients are specified or if the
+        configuration is invalid.
+
+    Example:
+    >>> config = {
+    ...     "setup": {"recovery_path": "/recovery", "key_path": "/keys"},
+    ...     "model": {"threshold": 0.5, "t_e": "2h", "t_a": None, "t_g": "1h"},
+    ...     "io": {"in_topics": ["t1", "t2"], "out_topics": ["o1"]},
+    ...     "mqtt": {"host": "mqtt-server", "port": 1883},
+    ... }
+    >>> get_valid_client(config)
+    {'setup': {'recovery_path': '/recovery', 'key_path': '/keys'},
+        'model': {'threshold': 0.5, 't_e': '2h', 't_a': None, 't_g': '1h'},
+        'io': {'in_topics': ['t1', 't2'], 'out_topics': ['o1']},
+        'client': {'host': 'mqtt-server', 'port': 1883}}
+
+    Multiple clients specified:
+    >>> config = {
+    ...     "setup": {"recovery_path": "/recovery", "key_path": "/keys"},
+    ...     "model": {"threshold": 0.5, "t_e": "2h", "t_a": None, "t_g": "1h"},
+    ...     "io": {"in_topics": ["t1", "t2"], "out_topics": ["o1"]},
+    ...     "mqtt": {"host": "mqtt-server", "port": 1883},
+    ...     "kafka": {"bootstrap_servers": "kafka-server"},
+    ... }
+    >>> get_valid_client(config)
+    Traceback (most recent call last):
+    ...
+    ValueError: Multiple clients specified: ['mqtt', 'kafka']
+
+    No valid client specified:
+    >>> config = {
+    ...     "setup": {"recovery_path": "/recovery", "key_path": "/keys"},
+    ...     "model": {"threshold": 0.5, "t_e": "2h", "t_a": None, "t_g": "1h"},
+    ...     "io": {"in_topics": ["t1", "t2"], "out_topics": ["o1"]},
+    ...     "mqtt": {"host": "mqtt-server", "port": None},
+    ... }
+    >>> get_valid_client(config)
+    Traceback (most recent call last):
+    ...
+    ValueError: Specify one of the clients: ['file', 'mqtt', 'kafka', 'pulsar']
+    """
+    config_ = config.copy()
+    active_clients = []
+    clients = ["file", "mqtt", "kafka", "pulsar"]
+    for client in clients:
+        if client in config_:
+            missing_args = any(
+                [arg is None for arg in config_[client].values()]
+            )
+            if missing_args:
+                del config_[client]
+            else:
+                active_clients.append(client)
+    if len(active_clients) > 1:
+        raise ValueError(f"Multiple clients specified: {active_clients}")
+    if len(active_clients) == 0:
+        raise ValueError(f"Specify one of the clients: {clients}")
+    if len(active_clients) == 1:
+        config_["client"] = config_.pop(active_clients[0])
+
+    return config_
+
+
+def build_config(args: Namespace, config_parser: ConfigParser) -> Config:
+    """Builds a configuration dictionary based on command line arguments and a
+    configuration file.
+
+    This function constructs a configuration dictionary following the
+    structure defined by TypedDicts. It populates the configuration from
+    command line arguments when provided, and falls back to values from a
+    configuration file.
+
+    Args:
+        args (Namespace): Parsed command line arguments.
+        config_parser (ConfigParser): The configuration parser for the
+        configuration file.
+
+    Returns:
+        Config: The configuration dictionary representing the application's
+        settings.
+
+    Example:
+    >>> from argparse import Namespace
+    >>> from configparser import ConfigParser
+    >>> args = Namespace(
+    ...     recovery_path='/recovery',
+    ...     threshold=0.75,
+    ...     in_topics=['topic1', 'topic2'],
+    ...     path='/data/file.txt'
+    ... )
+    >>> config_parser = ConfigParser()
+    >>> config_parser['setup'] = {'key_path': '/keys', 'debug': 'True'}
+    >>> config = build_config(args, config_parser)
+    >>> config['setup']['recovery_path']
+    '/recovery'
+    >>> config['setup']['key_path']
+    '/keys'
+    >>> config['model']['threshold']
+    0.75
+    >>> config['io']['in_topics']
+    ['topic1', 'topic2']
+    >>> config['file']['path']
+    '/data/file.txt'
+    """
     config_struct = {
         "setup": SetupConfig,
         "model": ModelConfig,
@@ -108,29 +315,12 @@ def get_params() -> Config:
         "kafka": KafkaClient,
         "pulsar": PulsarClient,
     }
-
-    config_parser = ConfigParser()
-    config_parser.read_file(args.config_file)
-
-    def make_valid_type(type_) -> type:
-        if isinstance(type_, type):
-            return type_
-        elif hasattr(type_, "__args__"):
-            # if any([t is type(None) for t in type_.__args__]):
-            #     return type(None)
-            if "NotRequired" in str(type_):
-                return str
-            else:
-                return make_valid_type(type_.__args__[0])
-        else:
-            raise ValueError(f"Invalid type: {type_}")
-
     args_ = vars(args)
-    config = {}
+    config: Config = {}  # type: ignore
     for section, struct in config_struct.items():
         config[section] = {}
         for param, type_ in struct.__annotations__.items():
-            type_ = make_valid_type(type_)
+            type_ = get_valid_type(type_)
             if args_.get(param) is not None:
                 param_value = args_[param]
             elif config_parser.has_option(section, param):
@@ -149,20 +339,28 @@ def get_params() -> Config:
                     param_value == ""):
                 config[section][param] = None
 
-    # Raise an error if multiple or no clients are specified
-    active_clients = []
-    clients = ["file", "mqtt", "kafka", "pulsar"]
-    for client in clients:
-        missing_args = any([arg is None for arg in config[client].values()])
-        if missing_args:
-            del config[client]
-        else:
-            active_clients.append(client)
-    if len(active_clients) > 1:
-        raise ValueError(f"Multiple clients specified: {active_clients}")
-    if len(active_clients) == 0:
-        raise ValueError(f"Specify one of the clients: {clients}")
-    if len(active_clients) == 1:
-        config["client"] = config.pop(active_clients[0])
+    return config
+
+
+def get_params() -> Config:  # pragma: no cover
+    """
+    Parses command line arguments and a configuration file to create a Config
+    object.
+
+    This function combines command line arguments and settings from a
+    configuration file to create a configuration object.
+
+    Returns:
+        Config: A Config object containing the parsed parameters.
+    """
+
+    args = get_args()
+
+    config_parser = ConfigParser()
+    config_parser.read_file(args.config_file)
+
+    config = build_config(args, config_parser)
+
+    get_valid_client(config)
 
     return config

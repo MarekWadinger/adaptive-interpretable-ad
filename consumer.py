@@ -6,7 +6,7 @@ import paho.mqtt.client as mqtt
 
 from functions.encryption import init_rsa_security, verify_and_decrypt_data
 from functions.parse import get_params
-from functions.typing_extras import FileClient, istypedinstance, MQTTClient
+from functions.typing_extras import FileClient, MQTTClient, istypedinstance
 
 PORT = 1883
 

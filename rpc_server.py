@@ -19,9 +19,16 @@ from functions.encryption import (
 from functions.model_persistence import load_model, save_model
 from functions.proba import MultivariateGaussian
 from functions.streamz_tools import _filt, _func, to_mqtt  # noqa: F401
-from functions.typing_extras import (FileClient, istypedinstance, IOConfig,
-                                     KafkaClient, ModelConfig, MQTTClient,
-                                     PulsarClient, SetupConfig)
+from functions.typing_extras import (
+    FileClient,
+    IOConfig,
+    KafkaClient,
+    ModelConfig,
+    MQTTClient,
+    PulsarClient,
+    SetupConfig,
+    istypedinstance,
+)
 from functions.utils import common_prefix
 
 # CONSTANTS
