@@ -4,7 +4,6 @@ from typing import Union
 
 from pandas import Timedelta
 from typing_extensions import NotRequired, TypedDict
-
 from functions.typing_extras import (
     FileClient,
     IOConfig,
@@ -174,6 +173,7 @@ def get_valid_type(type_) -> type:
         ...
         ValueError: Invalid type: None
     """
+    # TODO: get first valid type
     if isinstance(type_, type):
         return type_
     elif hasattr(type_, "__args__"):
