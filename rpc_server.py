@@ -19,7 +19,9 @@ from functions.encryption import (
 from functions.model_persistence import load_model, save_model
 from functions.proba import MultivariateGaussian
 from functions.streamz_tools import _filt, _func, to_mqtt  # noqa: F401
-from functions.typing_extras import *
+from functions.typing_extras import (FileClient, istypedinstance, IOConfig,
+                                     KafkaClient, ModelConfig, MQTTClient,
+                                     PulsarClient, SetupConfig)
 from functions.utils import common_prefix
 
 # CONSTANTS
@@ -34,11 +36,11 @@ def expand_model_params(model_params):
     threshold = model_params.get("threshold", 0.99735)
 
     def period_to_timedelta(
-        period: Union[str, dt.timedelta, pd.Timedelta]) -> dt.timedelta:
+            period: Union[str, dt.timedelta, pd.Timedelta]) -> dt.timedelta:
         """Convert a period to a timedelta.
 
         Args:
-            period (Union[str, dt.timedelta, pd.Timedelta]): Timedelta convertible period.
+            period: Timedelta convertible period.
 
         Raises:
             ValueError: If unsupported type provided.
