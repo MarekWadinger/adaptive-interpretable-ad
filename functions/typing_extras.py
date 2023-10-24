@@ -82,14 +82,12 @@ def istypedinstance(obj, type_):
                 property_type = Union[property_type.__args__[0], None]
             else:
                 property_type = type(None)
-
         try:
             return isinstance(value, property_type)
-        except:
+        except TypeError:
             if hasattr(property_type, "__args__"):
                 return isinstance(
-                    value,
-                    Union[property_type.__args__[0], None])
+                    value, Union[property_type.__args__[0], None])
             else:
                 return False
     return True
