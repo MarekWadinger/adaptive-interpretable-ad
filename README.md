@@ -33,7 +33,7 @@
 - **Change-point aware** — detects regime shifts and re-bases the safe range instead of drowning in false alarms.
 - **Root-cause isolation** — built-in fault diagnosis points to the signal that drove an event.
 - **Streaming-native** — built on [`river`](https://github.com/online-ml/river) + [`streamz`](https://github.com/python-streamz/streamz): single-pass, constant-memory.
-- **SCADA-ready** — drops onto existing industrial infrastructure (MQTT / NATS / Pulsar ingest), secured with [`human_security`](https://github.com/mdipierro/human_security).
+- **SCADA-ready** — drops onto existing industrial infrastructure (MQTT / NATS / Redis / Pulsar ingest), secured with [`human_security`](https://github.com/mdipierro/human_security).
 
 ## Overview
 
@@ -63,6 +63,7 @@ publish-subscribe services:
 - [**Apache Kafka**](https://kafka.apache.org)
 - [**Apache Pulsar**](https://pulsar.apache.org)
 - [**NATS**](https://nats.io)
+- [**Redis**](https://redis.io) (Pub/Sub channels or Streams)
 - Streamed [**DataFrame**](https://pandas.pydata.org)
 
 [**NATS**](https://nats.io) is a first-class transport. Add a `[nats]`
@@ -77,9 +78,29 @@ servers=nats://localhost:4222   ; comma-separate the value for a cluster
 
 ```bash
 uv run python rpc_client.py -f example.ini -t "plant/temperature"
-uv run python consumer.py  -f example.ini -t "plant/temperature"
 ```
 <!-- markdownlint-enable MD013 -->
+
+[**Redis**](https://redis.io) works the same way through a `[redis]`
+section, and the query-side `consumer.py` can tail the results too. `mode=pubsub` (default) treats each topic as a Pub/Sub channel,
+matching MQTT/NATS semantics; `mode=stream` appends to and tails Redis
+Streams (`XADD`/`XREAD`) so results survive a consumer restart:
+
+```ini
+[redis]
+url=redis://localhost:6379/0   ; rediss:// for TLS, unix:// for sockets
+mode=stream
+```
+
+```bash
+uv run python rpc_client.py -f example.ini -t "plant/temperature"
+uv run python consumer.py  -f example.ini -t "plant/temperature"
+```
+
+Only one transport section may be active at a time; `example.ini` ships
+with `[mqtt]` live and the other sections commented out as templates.
+The query-side `consumer.py` supports the file, MQTT and Redis
+transports (see [ROADMAP T4](ROADMAP.md#t4--query-side-parity) for the rest).
 
 The detector subscribes to each input subject (`-t` / `in_topics`) and
 publishes results to derived subjects: `<topic>anomaly` for the flag and

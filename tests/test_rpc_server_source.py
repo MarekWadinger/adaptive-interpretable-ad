@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +17,7 @@ from safeband.typing_extras import (
     MQTTClient,
     NATSClient,
     PulsarClient,
+    RedisClient,
 )
 
 
@@ -135,6 +137,33 @@ class TestGetSourceNats:
         )
         # The raw broker node is captured for stop detection, and the
         # returned node is the accumulate/filter wrapper, just like MQTT.
+        assert detector._raw_source is raw
+        assert source is not raw
+
+
+class TestGetSourceRedis:
+    """A RedisClient config wires from_redis with the MQTT-style wrapping."""
+
+    @pytest.mark.parametrize("mode", ["pubsub", "stream"])
+    def test_redis_source_wires_from_redis_and_wraps(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: Literal["pubsub", "stream"],
+    ) -> None:
+        """from_redis is built with the configured mode, then wrapped."""
+        raw = Stream()
+        from_redis = MagicMock(return_value=raw)
+        monkeypatch.setattr(Stream, "from_redis", from_redis)
+        detector = RpcOutlierDetector()
+
+        config = RedisClient(url="redis://localhost:6379/0", mode=mode)
+        source = detector.get_source(config, ["topic_a"], debug=False)
+
+        from_redis.assert_called_once_with(
+            url="redis://localhost:6379/0",
+            topic=["topic_a"],
+            mode=mode,
+        )
         assert detector._raw_source is raw
         assert source is not raw
 

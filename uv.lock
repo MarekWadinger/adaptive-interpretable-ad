@@ -2164,6 +2164,15 @@ wheels = [
 ]
 
 [[package]]
+name = "redis"
+version = "8.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/9d/c5731f6e3608663d4d3656fd8d3aecee8b509c3082818f5a13eae925baea/redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb", size = 560618, upload-time = "2026-07-30T08:50:58.497Z" },
+]
+
+[[package]]
 name = "referencing"
 version = "0.36.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2355,11 +2364,11 @@ dependencies = [
     { name = "pandas-stubs" },
     { name = "plotly" },
     { name = "pydantic" },
+    { name = "redis" },
     { name = "river", marker = "(implementation_version >= '3.11' and implementation_version < '3.13' and sys_platform == 'linux') or (platform_machine != 'aarch64' and sys_platform == 'linux') or sys_platform == 'darwin'" },
     { name = "scipy" },
     { name = "streamz" },
     { name = "streamz-pulsar" },
-    { name = "types-paho-mqtt" },
     { name = "typing-extensions" },
 ]
 
@@ -2390,17 +2399,17 @@ requires-dist = [
     { name = "human-security", specifier = ">=1.0" },
     { name = "matplotlib", specifier = "<4.0.0" },
     { name = "nats-py", specifier = "<3.0.0" },
-    { name = "paho-mqtt", specifier = "<3.0.0" },
+    { name = "paho-mqtt", specifier = ">=2.0,<3.0.0" },
     { name = "pandas", specifier = "<3.0.0" },
     { name = "pandas-stubs", specifier = ">=2.3.2.250827" },
     { name = "plotly", specifier = "<7.0.0" },
     { name = "pydantic", specifier = ">=2,<3" },
+    { name = "redis", specifier = ">=5.0,<9.0.0" },
     { name = "river", marker = "(implementation_version >= '3.11' and implementation_version < '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux') or sys_platform == 'darwin'", git = "https://github.com/MarekWadinger/river.git" },
     { name = "river", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'", git = "https://github.com/MarekWadinger/river.git" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "streamz", specifier = "<1.0.0" },
     { name = "streamz-pulsar", specifier = ">=0.1.1" },
-    { name = "types-paho-mqtt", specifier = ">=1.6.0.20240321" },
     { name = "typing-extensions", specifier = ">=4.12" },
 ]
 
@@ -2729,15 +2738,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/74/e9/9bba0e7fcc3a5058d7fa55be410356991925cc0f6546ccd1eb0821aee48f/ty-0.0.48-py3-none-win32.whl", hash = "sha256:19ad4acd4347ca3e206e7455c2a05fba228e1b3186463517bcb783f88885ff78", size = 11048763, upload-time = "2026-06-10T22:35:49.049Z" },
     { url = "https://files.pythonhosted.org/packages/bd/6a/71d815058affbbc26d43538002c74203cf6a72a4b342981fc13324e64412/ty-0.0.48-py3-none-win_amd64.whl", hash = "sha256:1f496d799abab6e5a26c901a049163f171aa1b40c8e418cdf76adf3444d1b0db", size = 12188589, upload-time = "2026-06-10T22:36:08.938Z" },
     { url = "https://files.pythonhosted.org/packages/1a/fe/a8f8ad81612ab7f75a170c70710f8d2c4ada39e86b827a4e524086f50c24/ty-0.0.48-py3-none-win_arm64.whl", hash = "sha256:77c94e4484897c3a184821cd56274b71f1c001663331f9c1ba06ac889633bff6", size = 11542770, upload-time = "2026-06-10T22:35:51.122Z" },
-]
-
-[[package]]
-name = "types-paho-mqtt"
-version = "1.6.0.20240321"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a6/2e/8836d327c52dd8818a6c61e976a627f04e68f11dc2e9980b70e7ce447475/types-paho-mqtt-1.6.0.20240321.tar.gz", hash = "sha256:694eec160340f2a2b151237dcc3f107a63e1c4e5b8f9fcda0ba392049af9cbec", size = 8173, upload-time = "2024-03-21T02:15:17.779Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/60/bd4d0cf58c7d7bbeed3c0043647f3b7b6ea0c27fd9cfd54dfdea4927bbc6/types_paho_mqtt-1.6.0.20240321-py3-none-any.whl", hash = "sha256:cd275c14f39363c2a0f8286ead9a46962e5421ebd477547b892ae016699f5a4a", size = 9260, upload-time = "2024-03-21T02:15:16.712Z" },
 ]
 
 [[package]]

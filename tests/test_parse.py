@@ -7,7 +7,7 @@ import pytest
 from pandas import Timedelta
 
 from safeband.parse import build_config, get_valid_client
-from safeband.typing_extras import MQTTClient
+from safeband.typing_extras import MQTTClient, RedisClient
 
 
 class TestBuildConfigDebug:
@@ -101,3 +101,40 @@ class TestGetValidClient:
             match="Specify one of the clients",
         ):
             get_valid_client(config)
+
+
+class TestRedisClientSection:
+    """The [redis] section resolves to a RedisClient with a mode default."""
+
+    def test_url_alone_selects_pubsub(self) -> None:
+        """Only ``url`` is required; ``mode`` defaults to pubsub."""
+        config = get_valid_client(
+            build_config(
+                Namespace(url="redis://localhost:6379/0"), ConfigParser()
+            ),
+        )
+        assert isinstance(config.client, RedisClient)
+        assert config.client.url == "redis://localhost:6379/0"
+        assert config.client.mode == "pubsub"
+
+    def test_mode_from_config_file(self) -> None:
+        """A config-file ``mode`` is honoured and validated."""
+        parser = ConfigParser()
+        parser["redis"] = {"url": "redis://cache:6379/1", "mode": "stream"}
+        config = get_valid_client(build_config(Namespace(), parser))
+        assert isinstance(config.client, RedisClient)
+        assert config.client.mode == "stream"
+
+    def test_invalid_mode_rejected(self) -> None:
+        """An unknown mode fails validation at config build time."""
+        parser = ConfigParser()
+        parser["redis"] = {"url": "redis://cache:6379/1", "mode": "queue"}
+        with pytest.raises(ValueError, match="mode"):
+            build_config(Namespace(), parser)
+
+    def test_mode_alone_is_not_a_client(self) -> None:
+        """``mode`` without ``url`` leaves the redis section absent."""
+        parser = ConfigParser()
+        parser["redis"] = {"mode": "stream"}
+        config = build_config(Namespace(), parser)
+        assert config.redis is None

@@ -1,14 +1,17 @@
-"""MQTT and file-based consumer for anomaly detection results."""
+"""MQTT, Redis and file-based consumer for anomaly detection results."""
 
 import datetime as dt
 import json
 import logging
 from argparse import Namespace
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import paho.mqtt.client as mqtt
+import redis
 from human_security import HumanRSA
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
 
 from safeband.encryption import (
     init_rsa_security,
@@ -16,30 +19,81 @@ from safeband.encryption import (
     verify_and_decrypt_data,
 )
 from safeband.parse import get_params
-from safeband.typing_extras import FileClient, MQTTClient
+from safeband.streamz_tools import (
+    _as_bytes,
+    _as_str,
+    _require_topics,
+    _stream_entry_payload,
+    _xread_batches,
+)
+from safeband.typing_extras import FileClient, MQTTClient, RedisClient
+
+if TYPE_CHECKING:
+    from redis.typing import KeyT, StreamIdT
 
 logger = logging.getLogger(__name__)
 
-PORT = 1883
+
+def _log_received(
+    topic: str,
+    payload: bytes | bytearray,
+    receiver: HumanRSA | None,
+    t: dt.datetime,
+) -> None:
+    """Decrypt (when a key is given) and log one received message.
+
+    Shared by every transport's receive path so the decrypt/log policy
+    cannot drift between MQTT and Redis.
+
+    Args:
+        topic: The topic/channel/stream the message arrived on.
+        payload: The raw message body.
+        receiver: RSA key used to verify and decrypt ``payload``; ``None``
+            treats the payload as plaintext.
+        t: The receive time used for logging.
+
+    """
+    if receiver is not None:
+        decoded = verify_and_decrypt_data(
+            json.loads(payload.decode()),
+            receiver,
+        )
+        item = json.dumps(decoded)
+        field_count = len(decoded)
+    else:
+        item = payload.decode()
+        field_count = None
+    # Log only metadata at INFO; the full decrypted payload may carry
+    # sensitive values, so it is emitted at DEBUG instead.
+    logger.info(
+        "Received message at %s on %s (%s fields)",
+        t,
+        topic,
+        field_count if field_count is not None else "n/a",
+    )
+    logger.debug("Message payload at %s: %s", t, item)
 
 
-# MQTT callback functions
+# MQTT callback functions (paho callback API v2)
 def on_connect(
     self: mqtt.Client,
     userdata: Namespace,
-    _flags: dict[str, int],
-    rc: int,
+    _flags: mqtt.ConnectFlags,
+    reason_code: ReasonCode,
+    _properties: Properties | None,
 ) -> None:
     """Subscribe to configured topics after a successful broker connection.
 
     Args:
         self: MQTT client instance invoking the callback.
-        userdata: User-specific data passed to the callback.
-        _flags: Response flags from the broker (unused).
-        rc: The connection result code.
+        userdata: User-specific data passed to the callback; ``topic``
+            holds the list of topics to subscribe to.
+        _flags: Connect flags from the broker (unused).
+        reason_code: The connection result.
+        _properties: MQTT v5 properties (unused).
 
     """
-    logger.info("Connected with result code %s", rc)
+    logger.info("Connected with result code %s", reason_code)
     self.subscribe([(topic, 0) for topic in userdata.topic])
 
 
@@ -52,33 +106,16 @@ def on_message(
 
     Args:
         _self: MQTT client instance (unused).
-        userdata: User-specific data passed to the callback.
+        userdata: User-specific data passed to the callback; an optional
+            ``receiver`` attribute holds the decryption key.
         msg: The message received from the broker.
 
     """
     receiver = getattr(userdata, "receiver", None)
-    if receiver is not None:
-        decoded = verify_and_decrypt_data(
-            json.loads(msg.payload.decode()),
-            receiver,
-        )
-        item = json.dumps(decoded)
-        field_count = len(decoded)
-    else:
-        item = msg.payload.decode()
-        field_count = None
     t = dt.datetime.fromtimestamp(msg.timestamp, tz=dt.UTC).replace(
         microsecond=0,
     )
-    # Log only metadata at INFO; the full decrypted payload may carry
-    # sensitive values, so it is emitted at DEBUG instead.
-    logger.info(
-        "Received message at %s on %s (%s fields)",
-        t,
-        msg.topic,
-        field_count if field_count is not None else "n/a",
-    )
-    logger.debug("Message payload at %s: %s", t, item)
+    _log_received(msg.topic, msg.payload, receiver, t)
 
 
 def query_file(config: FileClient, **kwargs: HumanRSA | None) -> None:
@@ -134,26 +171,130 @@ def query_file(config: FileClient, **kwargs: HumanRSA | None) -> None:
     logger.debug("Closest entry payload: %s", closest_item)
 
 
-def query_mqtt(config: MQTTClient) -> mqtt.Client:
+def query_mqtt(
+    config: MQTTClient,
+    topics: list[str],
+    receiver: HumanRSA | None = None,
+) -> mqtt.Client:
     """Create an MQTT client instance and connect to the configured broker.
 
     Args:
-        config: MQTT client configuration with ``host`` and optional port keys.
+        config: MQTT client configuration with ``host`` and ``port`` keys.
+        topics: Topics to subscribe to once connected.
+        receiver: RSA key used to decrypt received messages, or ``None``
+            for plaintext.
 
     Returns:
         mqtt.Client: Connected MQTT client instance.
 
     """
-    # Create MQTT client instance
-    client = mqtt.Client()
+    # The callbacks read the topic list and key back from userdata.
+    client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2,
+        userdata=Namespace(topic=topics, receiver=receiver),
+    )
 
     # Assign callback functions
     client.on_connect = on_connect
     client.on_message = on_message
 
     # Connect to the MQTT broker
-    client.connect(config.host, PORT, 60)
+    client.connect(config.host, config.port, 60)
     return client
+
+
+def _now() -> dt.datetime:
+    """Return the current UTC time truncated to whole seconds."""
+    return dt.datetime.now(dt.UTC).replace(microsecond=0)
+
+
+def query_redis(
+    config: RedisClient,
+    topics: list[str],
+    receiver: HumanRSA | None = None,
+    *,
+    client: redis.Redis | None = None,
+    max_messages: int | None = None,
+    block_ms: int = 1000,
+) -> None:
+    """Subscribe to Redis channels or tail Redis Streams and log results.
+
+    Mirrors :func:`query_mqtt` for the ``[redis]`` transport. With
+    ``mode="pubsub"`` the configured topics are Pub/Sub channels; with
+    ``mode="stream"`` they are Redis Streams tailed from the current tip
+    with blocking ``XREAD`` calls. Runs until interrupted unless
+    ``max_messages`` bounds it.
+
+    Args:
+        config: Redis client configuration with ``url`` and ``mode``.
+        topics: Channels or stream keys to consume.
+        receiver: RSA key used to decrypt received messages, or ``None``
+            for plaintext.
+        client: Pre-built client (used by tests); ``None`` connects to
+            ``config.url``.
+        max_messages: Stop after this many messages; ``None`` runs
+            forever.
+        block_ms: ``XREAD`` block timeout in stream mode.
+
+    Raises:
+        ValueError: If ``topics`` is empty.
+
+    """
+    _require_topics(topics)
+    own_client = client is None
+    if client is None:
+        client = redis.Redis.from_url(config.url)
+    seen = 0
+
+    def _done() -> bool:
+        return max_messages is not None and seen >= max_messages
+
+    try:
+        if config.mode == "pubsub":
+            pubsub = client.pubsub(ignore_subscribe_messages=True)
+            try:
+                pubsub.subscribe(*topics)
+                logger.info("Subscribed to channels %s", topics)
+                for message in pubsub.listen():
+                    if message.get("type") != "message":
+                        continue
+                    _log_received(
+                        _as_str(message["channel"]),
+                        _as_bytes(message["data"]),
+                        receiver,
+                        _now(),
+                    )
+                    seen += 1
+                    if _done():
+                        break
+            finally:
+                pubsub.close()
+        else:
+            last_ids: dict[KeyT, StreamIdT] = dict.fromkeys(topics, "$")
+            logger.info("Tailing streams %s", topics)
+            while not _done():
+                for stream, entries in _xread_batches(
+                    client,
+                    last_ids,
+                    block_ms,
+                ):
+                    name = _as_str(stream)
+                    for entry_id, fields in entries:
+                        last_ids[name] = entry_id
+                        _log_received(
+                            name,
+                            _stream_entry_payload(fields),
+                            receiver,
+                            _now(),
+                        )
+                        seen += 1
+                        if _done():
+                            break
+                    if _done():
+                        break
+    finally:
+        if own_client:
+            client.close()
 
 
 if __name__ == "__main__":
@@ -169,5 +310,7 @@ if __name__ == "__main__":
     if isinstance(client, FileClient):
         query_file(client, receiver=receiver)
     elif isinstance(client, MQTTClient):
-        mqtt_client = query_mqtt(client)
+        mqtt_client = query_mqtt(client, config.io.in_topics, receiver)
         mqtt_client.loop_forever()
+    elif isinstance(client, RedisClient):
+        query_redis(client, config.io.in_topics, receiver)

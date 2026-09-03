@@ -11,6 +11,7 @@ the distinct client models.
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from pandas import Timedelta
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -68,6 +69,23 @@ class NATSClient(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     servers: str
+
+
+class RedisClient(BaseModel):
+    """Redis client connection parameters.
+
+    ``url`` is a ``redis://`` / ``rediss://`` / ``unix://`` URL accepted by
+    ``redis.Redis.from_url``. ``mode`` selects the transport semantics:
+    ``"pubsub"`` (default) uses Redis Pub/Sub channels, which behave like
+    MQTT topics or NATS subjects (fire-and-forget, no persistence);
+    ``"stream"`` uses Redis Streams (``XADD``/``XREAD``), an append-only
+    log that survives consumer downtime, closer to Kafka topics.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    url: str
+    mode: Literal["pubsub", "stream"] = "pubsub"
 
 
 class IOConfig(BaseModel):
@@ -140,11 +158,13 @@ class Config(BaseModel):
     kafka: KafkaClient | None = None
     pulsar: PulsarClient | None = None
     nats: NATSClient | None = None
+    redis: RedisClient | None = None
     client: (
         FileClient
         | MQTTClient
         | KafkaClient
         | PulsarClient
         | NATSClient
+        | RedisClient
         | None
     ) = None

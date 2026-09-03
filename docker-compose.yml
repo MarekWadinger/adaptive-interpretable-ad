@@ -34,6 +34,11 @@ services:
       - pulsarconf:/pulsar/conf
     command: bin/pulsar standalone
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
 volumes:
   pulsardata:
   pulsarconf:
