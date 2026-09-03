@@ -13,14 +13,15 @@ import pytest
 from human_security import HumanRSA
 
 sys.path.insert(1, str(Path(__file__).parent.parent))
-from consumer import on_message, query_file
+import consumer as consumer_mod
+from consumer import on_message, query_file, query_redis
 from safeband.encryption import (
     decode_data,
     encrypt_data,
     sign_data,
 )
 from safeband.model_persistence import load_model, save_model
-from safeband.typing_extras import FileClient
+from safeband.typing_extras import FileClient, RedisClient
 from safeband.utils import common_prefix
 
 
@@ -252,3 +253,98 @@ class TestModelPresistence:
         save_model(str(tmp_path), self.topics, {"model": 1}, keep_last=0)
 
         assert len(list(tmp_path.glob(f"{prefix}_*.pkl"))) == 4
+
+
+class TestQueryRedis:
+    """query_redis consumes Pub/Sub channels or streams via a given client."""
+
+    def test_pubsub_logs_each_message_and_stops(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Subscribes to the topics, logs message events, skips the rest."""
+        client = MagicMock()
+        pubsub = client.pubsub.return_value
+        pubsub.listen.return_value = iter(
+            [
+                {"type": "subscribe", "channel": b"plant/a", "data": 1},
+                {"type": "message", "channel": b"plant/a", "data": b"1.5"},
+                {"type": "message", "channel": b"plant/b", "data": b"2.5"},
+            ],
+        )
+        config = RedisClient(url="redis://localhost:6379/0")
+
+        with caplog.at_level(logging.INFO, logger="consumer"):
+            query_redis(
+                config,
+                ["plant/a", "plant/b"],
+                client=client,
+                max_messages=2,
+            )
+
+        pubsub.subscribe.assert_called_once_with("plant/a", "plant/b")
+        assert "on plant/a" in caplog.text
+        assert "on plant/b" in caplog.text
+        pubsub.close.assert_called_once()
+        # A caller-supplied client is not closed by query_redis.
+        client.close.assert_not_called()
+
+    def test_stream_tails_from_tip_and_advances(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Stream mode XREADs from ``$`` and resumes after the last id."""
+        client = MagicMock()
+        seen_ids: list[dict] = []
+        batches = iter(
+            [
+                [(b"plant/a", [(b"1-0", {b"data": b"1.5"})])],
+                [(b"plant/a", [(b"2-0", {b"data": b"1.6"})])],
+            ],
+        )
+
+        def _xread(last_ids: dict, block: int) -> list:  # noqa: ARG001
+            # The caller mutates last_ids in place, so snapshot it.
+            seen_ids.append(dict(last_ids))
+            return next(batches)
+
+        client.xread.side_effect = _xread
+        config = RedisClient(url="redis://localhost:6379/0", mode="stream")
+
+        with caplog.at_level(logging.INFO, logger="consumer"):
+            query_redis(config, ["plant/a"], client=client, max_messages=2)
+
+        assert seen_ids == [{"plant/a": "$"}, {"plant/a": b"1-0"}]
+        assert caplog.text.count("Received message") == 2
+
+    def test_decrypts_with_receiver(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A receiver key routes payloads through verify_and_decrypt_data."""
+        decrypt = MagicMock(return_value={"time": "t", "anomaly": 1})
+        monkeypatch.setattr(consumer_mod, "verify_and_decrypt_data", decrypt)
+        client = MagicMock()
+        client.pubsub.return_value.listen.return_value = iter(
+            [
+                {
+                    "type": "message",
+                    "channel": b"x",
+                    "data": b'{"signature": "s"}',
+                }
+            ],
+        )
+        config = RedisClient(url="redis://localhost:6379/0")
+
+        with caplog.at_level(logging.INFO, logger="consumer"):
+            query_redis(
+                config,
+                ["x"],
+                receiver=MagicMock(),
+                client=client,
+                max_messages=1,
+            )
+
+        decrypt.assert_called_once()
+        assert "(2 fields)" in caplog.text

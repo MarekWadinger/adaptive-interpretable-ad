@@ -1,4 +1,4 @@
-"""Streamz stream operators and MQTT/NATS sinks for real-time pipelines."""
+"""Streamz operators and MQTT/NATS/Redis nodes for real-time pipelines."""
 
 from __future__ import annotations
 
@@ -8,10 +8,11 @@ import queue
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import nats
 import paho.mqtt.client as mqtt
+import redis
 from streamz import Sink, Stream
 from streamz.sources import from_q
 
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
 
     from nats.aio.client import Client as NATSConnection
     from nats.aio.msg import Msg as NATSMsg
+    from redis.client import PubSub, PubSubWorkerThread
+    from redis.typing import KeyT, StreamIdT
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +173,117 @@ class NATSMessage:
 
     topic: str
     payload: bytes
+
+
+@dataclass
+class RedisMessage:
+    """Adapter exposing a Redis message with the MQTT message interface.
+
+    Redis Pub/Sub delivers ``channel``/``data`` and Redis Streams deliver
+    ``(stream, entry_id, fields)``; both are normalised to ``topic`` (str)
+    and ``payload`` (bytes) so the ``_func``/``_filt`` accumulator and
+    ``preprocess`` stay transport-agnostic, exactly like
+    :class:`NATSMessage`.
+
+    Args:
+        topic (str): The channel or stream key the message arrived on.
+        payload (bytes): The raw message body.
+
+    Examples:
+    >>> m = RedisMessage(topic="foo", payload=b"1.")
+    >>> m.topic, m.payload
+    ('foo', b'1.')
+
+    """
+
+    topic: str
+    payload: bytes
+
+
+RedisMode = Literal["pubsub", "stream"]
+_REDIS_MODES: frozenset[str] = frozenset({"pubsub", "stream"})
+# Field name used for the message body when a result is appended to a
+# Redis Stream; the source reads the same field back.
+_REDIS_STREAM_FIELD = b"data"
+
+
+def _check_redis_mode(mode: str) -> RedisMode:
+    """Validate a Redis transport ``mode``.
+
+    Args:
+        mode: ``"pubsub"`` for Redis Pub/Sub channels or ``"stream"`` for
+            Redis Streams.
+
+    Returns:
+        RedisMode: The validated mode.
+
+    Raises:
+        ValueError: If ``mode`` is neither ``"pubsub"`` nor ``"stream"``.
+
+    Examples:
+    >>> _check_redis_mode("stream")
+    'stream'
+    >>> _check_redis_mode("queue")
+    Traceback (most recent call last):
+    ...
+    ValueError: mode must be 'pubsub' or 'stream', got 'queue'
+
+    """
+    if mode not in _REDIS_MODES:
+        msg = f"mode must be 'pubsub' or 'stream', got {mode!r}"
+        raise ValueError(msg)
+    return cast("RedisMode", mode)
+
+
+def _as_str(value: str | bytes) -> str:
+    """Decode a Redis key/channel name that may arrive as bytes.
+
+    Examples:
+    >>> _as_str(b"plant/a"), _as_str("plant/a")
+    ('plant/a', 'plant/a')
+
+    """
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def _stream_entry_payload(fields: dict) -> bytes:
+    """Extract the message body from a Redis Stream entry's field map.
+
+    Entries written by :class:`to_redis` carry the body under the ``data``
+    field. Entries produced by other publishers fall back to their first
+    field value so foreign streams remain consumable.
+
+    Examples:
+    >>> _stream_entry_payload({b"data": b"1.5"})
+    b'1.5'
+    >>> _stream_entry_payload({b"value": b"2.5", b"unit": b"C"})
+    b'2.5'
+    >>> _stream_entry_payload({})
+    b''
+
+    """
+    for key in (_REDIS_STREAM_FIELD, _REDIS_STREAM_FIELD.decode()):
+        if key in fields:
+            return fields[key]
+    return next(iter(fields.values()), b"")
+
+
+# One XREAD reply: ``[(stream, [(entry_id, {field: value}), ...]), ...]``.
+_StreamBatches = list[tuple[str | bytes, list[tuple[bytes, dict]]]]
+
+
+def _xread_batches(
+    client: redis.Redis,
+    last_ids: dict[KeyT, StreamIdT],
+    block_ms: int,
+) -> _StreamBatches:
+    """Run one blocking ``XREAD`` and return its reply concretely typed.
+
+    redis-py annotates ``xread`` with a loose union (it also serves the
+    async client), so the sync reply is narrowed here once for both the
+    :class:`from_redis` source and ``consumer.query_redis``.
+    """
+    return cast("_StreamBatches", client.xread(last_ids, block=block_ms))
 
 
 @Stream.register_api(attribute_name="map")
@@ -378,7 +492,10 @@ class to_mqtt(Sink):
         del who, metadata  # unused; required by the streamz Sink.update API
 
         if self.client is None:
-            self.client = mqtt.Client(clean_session=True)
+            self.client = mqtt.Client(
+                mqtt.CallbackAPIVersion.VERSION2,
+                clean_session=True,
+            )
             self.client.connect(
                 self.host,
                 self.port,
@@ -686,6 +803,291 @@ class to_nats(Sink):
                 loop.call_soon_threadsafe(loop.stop)
         self._nc = None
         self._client_loop = None
+        super().destroy()
+
+
+@Stream.register_api(staticmethod)
+class from_redis(from_q):
+    """Streamz Source that reads messages from Redis channels or streams.
+
+    streamz ships no Redis source, so this subclass bridges ``redis-py``
+    into streamz's IOLoop. The client is synchronous and thread-safe, so
+    no private asyncio loop is needed (unlike :class:`from_nats`):
+
+    * ``mode="pubsub"`` subscribes to each ``topic`` as a Redis Pub/Sub
+      channel and lets redis-py's own ``run_in_thread`` worker deliver
+      messages, which behaves like MQTT topics / NATS subjects
+      (fire-and-forget, no replay).
+    * ``mode="stream"`` tails each ``topic`` as a Redis Stream with a
+      blocking ``XREAD`` on a background thread, starting at ``start_id``
+      (``"$"``: only entries published after start-up, like the other
+      transports; ``"0"``: replay the whole log). The body is read from
+      the ``data`` field, falling back to the first field of foreign
+      entries.
+
+    Either way the callback pushes :class:`RedisMessage` adapters into a
+    thread-safe ``queue.Queue`` that the inherited ``from_q`` polling loop
+    drains on streamz's IOLoop, so the downstream ``_func``/``_filt``
+    accumulator is identical to the MQTT and NATS paths.
+
+    Args:
+        url (str): Redis URL accepted by ``redis.Redis.from_url`` (for
+            example ``redis://localhost:6379/0``).
+        topic (str | list[str]): Channel/stream key or list of keys.
+        mode (str): ``"pubsub"`` (default) or ``"stream"``.
+        connect_kwargs (dict | None): Extra arguments forwarded to
+            ``redis.Redis.from_url``.
+        sleep_time (float): Seconds the polling loops wait when idle.
+        block_ms (int): ``XREAD`` block timeout in milliseconds (stream
+            mode); bounds how long ``stop()`` waits for the reader thread.
+        start_id (str): First stream id to read from (stream mode).
+        **kwargs: Forwarded to ``streamz.Source``.
+
+    Examples:
+    Construction is lazy; the client only connects once the source is
+    started, so wiring the node stays offline.
+
+    >>> from streamz import Stream
+    >>> source = Stream.from_redis(
+    ...     url="redis://localhost:6379/0",
+    ...     topic=["plant/a", "plant/b"],
+    ...     mode="stream",
+    ... )
+    >>> source.channels
+    ['plant/a', 'plant/b']
+    >>> source.mode
+    'stream'
+    >>> source.stop()
+
+    """
+
+    def __init__(
+        self,
+        url: str,
+        topic: str | list[str],
+        mode: str = "pubsub",
+        connect_kwargs: dict | None = None,
+        sleep_time: float = 0.01,
+        block_ms: int = 1000,
+        start_id: str = "$",
+        **kwargs: object,
+    ) -> None:
+        """Store connection parameters and initialise the polling source."""
+        self.url = url
+        self.channels = [topic] if isinstance(topic, str) else list(topic)
+        self.mode = _check_redis_mode(mode)
+        self.connect_kwargs = connect_kwargs or {}
+        self.sleep_time = sleep_time
+        self.block_ms = block_ms
+        self.start_id = start_id
+        self._client: redis.Redis | None = None
+        self._pubsub: PubSub | None = None
+        self._worker: PubSubWorkerThread | None = None
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        super().__init__(
+            q=queue.Queue(),
+            sleep_time=sleep_time,
+            **kwargs,
+        )
+
+    def _on_message(self, message: dict) -> None:
+        """Queue a Pub/Sub message as an MQTT-compatible adapter."""
+        self.q.put(
+            RedisMessage(
+                topic=_as_str(message["channel"]),
+                payload=message["data"],
+            ),
+        )
+
+    def _on_entry(self, stream: str | bytes, fields: dict) -> None:
+        """Queue one Redis Stream entry as an MQTT-compatible adapter."""
+        self.q.put(
+            RedisMessage(
+                topic=_as_str(stream),
+                payload=_stream_entry_payload(fields),
+            ),
+        )
+
+    def _run_stream_loop(self) -> None:
+        """Tail the configured streams with blocking ``XREAD`` calls."""
+        client = self._client
+        assert client is not None  # set by start()
+        last_ids: dict[KeyT, StreamIdT] = dict.fromkeys(
+            self.channels, self.start_id
+        )
+        while not self._stop_event.is_set():
+            try:
+                results = _xread_batches(client, last_ids, self.block_ms)
+            except redis.RedisError:
+                logger.warning(
+                    "Redis XREAD failed; retrying",
+                    exc_info=True,
+                )
+                self._stop_event.wait(1.0)
+                continue
+            for stream, entries in results:
+                name = _as_str(stream)
+                for entry_id, fields in entries:
+                    last_ids[name] = entry_id
+                    self._on_entry(name, fields)
+
+    def start(self) -> None:
+        """Connect, subscribe or start tailing, then start polling."""
+        if self.stopped:
+            if self._client is None:
+                self._client = redis.Redis.from_url(
+                    self.url,
+                    **self.connect_kwargs,
+                )
+            if self.mode == "pubsub":
+                if self._worker is None:
+                    self._pubsub = self._client.pubsub(
+                        ignore_subscribe_messages=True,
+                    )
+                    self._pubsub.subscribe(
+                        **dict.fromkeys(self.channels, self._on_message),
+                    )
+                    self._worker = self._pubsub.run_in_thread(
+                        sleep_time=self.sleep_time,
+                        daemon=True,
+                    )
+            elif self._thread is None or not self._thread.is_alive():
+                self._stop_event.clear()
+                self._thread = threading.Thread(
+                    target=self._run_stream_loop,
+                    daemon=True,
+                    name="from_redis-stream",
+                )
+                self._thread.start()
+            super().start()
+
+    def stop(self) -> None:
+        """Stop polling and tear down the subscription and client."""
+        super().stop()
+        self._stop_event.set()
+        if self._worker is not None:
+            self._worker.stop()
+            self._worker = None
+        if self._pubsub is not None:
+            self._pubsub.close()
+            self._pubsub = None
+        if self._thread is not None:
+            self._thread.join(timeout=self.block_ms / 1000 + 1)
+            self._thread = None
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
+
+@Stream.register_api()
+class to_redis(Sink):
+    """Streamz Sink that publishes upstream messages to Redis.
+
+    The payload fan-out mirrors :class:`to_mqtt` and :class:`to_nats`: raw
+    bytes pass through to the configured key, while dict results split
+    into ``anomaly``, ``*_DOL_high``, ``*_DOL_low`` and ``*_root_cause``
+    keys. With ``mode="pubsub"`` each key is a Pub/Sub channel
+    (``PUBLISH``); with ``mode="stream"`` each key is a Redis Stream and
+    the body is appended under the ``data`` field (``XADD``), optionally
+    trimmed to ``maxlen`` entries so an unattended stream cannot grow
+    without bound.
+
+    Args:
+        upstream (Stream): Upstream stream.
+        url (str): Redis URL accepted by ``redis.Redis.from_url``.
+        topic (str): Channel/stream key prefix for published messages.
+        mode (str): ``"pubsub"`` (default) or ``"stream"``.
+        connect_kwargs (dict | None): Extra arguments for
+            ``redis.Redis.from_url``.
+        maxlen (int | None): Approximate maximum stream length kept by
+            ``XADD`` in stream mode; ``None`` never trims.
+        **kwargs: Additional keyword arguments for the Sink.
+
+    Examples:
+    Construction is lazy and stays offline; the live publish is marked
+    ``# doctest: +SKIP`` because it needs a running Redis server.
+
+    >>> from streamz import Stream
+    >>> redis_sink = to_redis(
+    ...     Stream(),
+    ...     url="redis://localhost:6379/0",
+    ...     topic="safeband/test",
+    ... )
+    >>> redis_sink.mode
+    'pubsub'
+    >>> redis_sink.update(b"hello")  # doctest: +SKIP
+    >>> redis_sink.update(  # doctest: +SKIP
+    ...     {'anomaly': 1, 'level_high': 0.5, 'level_low': -0.5},
+    ... )
+    >>> redis_sink.destroy()  # doctest: +SKIP
+
+    """
+
+    def __init__(
+        self,
+        upstream: Stream,
+        url: str,
+        topic: str,
+        mode: str = "pubsub",
+        connect_kwargs: dict | None = None,
+        maxlen: int | None = None,
+        **kwargs: object,
+    ) -> None:
+        """Store connection parameters and initialise the Sink."""
+        self.url = url
+        self.topic = topic
+        self.mode = _check_redis_mode(mode)
+        self.connect_kwargs = connect_kwargs or {}
+        self.maxlen = maxlen
+        self.client: redis.Redis | None = None
+        super().__init__(upstream, ensure_io_loop=True, **kwargs)
+
+    def _ensure_client(self) -> None:
+        """Connect lazily on first use."""
+        if self.client is None:
+            self.client = redis.Redis.from_url(self.url, **self.connect_kwargs)
+
+    def _publish(self, key: str, payload: object) -> None:
+        """Publish one message to ``key`` (channel or stream)."""
+        assert self.client is not None  # narrowed by update()
+        data = payload if isinstance(payload, bytes) else str(payload).encode()
+        try:
+            if self.mode == "pubsub":
+                self.client.publish(key, data)
+            else:
+                self.client.xadd(
+                    key,
+                    {_REDIS_STREAM_FIELD: data},
+                    maxlen=self.maxlen,
+                    approximate=True,
+                )
+        except redis.RedisError:
+            logger.warning(
+                "Redis publish to %r failed; message dropped",
+                key,
+                exc_info=True,
+            )
+
+    def update(
+        self,
+        x: bytes | dict,
+        who: Stream | None = None,
+        metadata: list | None = None,
+    ) -> None:
+        """Publish x to Redis, connecting lazily on first call."""
+        del who, metadata  # unused; required by the streamz Sink.update API
+        self._ensure_client()
+        if isinstance(x, bytes):
+            self._publish(self.topic, x)
+        else:
+            _fan_out(self._publish, self.topic, x)
+
+    def destroy(self) -> None:
+        """Close the Redis connection, then destroy the sink."""
+        if self.client is not None:
+            self.client.close()
+            self.client = None
         super().destroy()
 
 

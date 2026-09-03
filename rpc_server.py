@@ -1,4 +1,4 @@
-"""Streaming anomaly detection server with MQTT, Kafka, and file I/O."""
+"""Streaming anomaly detection server over message brokers or files."""
 
 # IMPORTS
 import contextlib
@@ -35,8 +35,10 @@ from safeband.streamz_tools import (  # noqa: F401
     _filt,
     _func,
     from_nats,
+    from_redis,
     to_mqtt,
     to_nats,
+    to_redis,
 )
 from safeband.typing_extras import (
     EmailConfig,
@@ -47,6 +49,7 @@ from safeband.typing_extras import (
     MQTTClient,
     NATSClient,
     PulsarClient,
+    RedisClient,
     SetupConfig,
 )
 from safeband.utils import common_prefix
@@ -60,7 +63,12 @@ _exit_stack: contextlib.ExitStack = contextlib.ExitStack()
 # Union of every supported transport configuration accepted by the
 # source/sink dispatch methods.
 _ClientConfig = (
-    FileClient | MQTTClient | KafkaClient | PulsarClient | NATSClient
+    FileClient
+    | MQTTClient
+    | KafkaClient
+    | PulsarClient
+    | NATSClient
+    | RedisClient
 )
 
 
@@ -476,6 +484,27 @@ class RpcOutlierDetector:
             topics=topics,
         ).filter(_filt, topics)
 
+    def _source_redis(
+        self,
+        config: _ClientConfig,
+        topics: list,
+        debug: bool,  # noqa: ARG002
+    ) -> Stream:
+        config = cast("RedisClient", config)
+        source = Stream.from_redis(
+            url=config.url,
+            topic=topics,
+            mode=config.mode,
+        )
+        # Same raw-node capture and MQTT-style accumulate/filter wrapping
+        # as NATS: RedisMessage exposes ``.topic``/``.payload``.
+        self._raw_source = source
+        return source.accumulate(
+            _func,
+            start={},
+            topics=topics,
+        ).filter(_filt, topics)
+
     def get_source(
         self,
         config: _ClientConfig,
@@ -485,7 +514,8 @@ class RpcOutlierDetector:
         """Return a Streamz source stream based on the transport configuration.
 
         Dispatches to ``from_iterable`` (file), ``from_mqtt``, ``from_kafka``,
-        or ``from_pulsar`` depending on the keys present in ``config``.
+        ``from_pulsar``, ``from_nats`` or ``from_redis`` depending on the
+        client model type of ``config``.
 
         Args:
             config: Client configuration dict identifying the transport type.
@@ -588,6 +618,20 @@ class RpcOutlierDetector:
             topic=prefix,
         )
 
+    def _sink_redis(
+        self,
+        config: _ClientConfig,
+        detector: Stream,
+        prefix: str,
+        topic: str,  # noqa: ARG002
+    ) -> None:
+        config = cast("RedisClient", config)
+        detector.to_redis(
+            url=config.url,
+            topic=prefix,
+            mode=config.mode,
+        )
+
     def get_sink(
         self,
         config: _ClientConfig,
@@ -678,7 +722,8 @@ class RpcOutlierDetector:
         sink stages, then delegates execution to ``run``.
 
         Args:
-            client: Transport configuration (file, MQTT, Kafka, or Pulsar).
+            client: Transport configuration (file, MQTT, Kafka, Pulsar,
+                NATS, or Redis).
             io: I/O configuration with ``in_topics`` and ``out_topics``.
             model_params: Model hyper-parameters including ``t_e`` and optional
                 ``t_a``, ``t_g``, ``threshold``, and ``physical_limits``
@@ -824,5 +869,9 @@ _TRANSPORT_REGISTRY: dict[
     NATSClient: (
         RpcOutlierDetector._source_nats,
         RpcOutlierDetector._sink_nats,
+    ),
+    RedisClient: (
+        RpcOutlierDetector._source_redis,
+        RpcOutlierDetector._sink_redis,
     ),
 }

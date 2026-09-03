@@ -18,6 +18,7 @@ from safeband.typing_extras import (
     MQTTClient,
     NATSClient,
     PulsarClient,
+    RedisClient,
 )
 
 
@@ -144,6 +145,53 @@ class TestGetSinkNats:
         to_nats.assert_called_once_with(
             servers="nats://localhost:4222",
             topic="custom/",
+        )
+
+
+class TestGetSinkRedis:
+    """Tests for the Redis sink branch."""
+
+    def test_redis_sink_uses_common_prefix_and_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The Redis key prefix is derived from the input topics."""
+        to_redis = MagicMock()
+        monkeypatch.setattr(Stream, "to_redis", to_redis)
+        config = RedisClient(url="redis://localhost:6379/0", mode="stream")
+
+        RpcOutlierDetector().get_sink(
+            config,
+            ["plant/a", "plant/b"],
+            Stream(),
+        )
+
+        to_redis.assert_called_once_with(
+            url="redis://localhost:6379/0",
+            topic="plant/",
+            mode="stream",
+        )
+
+    def test_redis_sink_honors_out_topics(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Configured out_topics override the input-derived prefix."""
+        to_redis = MagicMock()
+        monkeypatch.setattr(Stream, "to_redis", to_redis)
+        config = RedisClient(url="redis://localhost:6379/0")
+
+        RpcOutlierDetector().get_sink(
+            config,
+            ["plant/a", "plant/b"],
+            Stream(),
+            out_topics=["custom/limits"],
+        )
+
+        to_redis.assert_called_once_with(
+            url="redis://localhost:6379/0",
+            topic="custom/",
+            mode="pubsub",
         )
 
 

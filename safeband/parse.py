@@ -21,6 +21,7 @@ from safeband.typing_extras import (
     MQTTClient,
     NATSClient,
     PulsarClient,
+    RedisClient,
 )
 
 if TYPE_CHECKING:
@@ -38,10 +39,11 @@ _SECTION_FIELDS: dict[str, list[str]] = {
     "kafka": ["bootstrap_servers"],
     "pulsar": ["service_url"],
     "nats": ["servers"],
+    "redis": ["url", "mode"],
 }
 
 # Transport sections, in dispatch precedence order.
-_CLIENTS: list[str] = ["file", "mqtt", "kafka", "pulsar", "nats"]
+_CLIENTS: list[str] = ["file", "mqtt", "kafka", "pulsar", "nats", "redis"]
 
 _CLIENT_MODELS: dict[str, type[BaseModel]] = {
     "file": FileClient,
@@ -49,6 +51,7 @@ _CLIENT_MODELS: dict[str, type[BaseModel]] = {
     "kafka": KafkaClient,
     "pulsar": PulsarClient,
     "nats": NATSClient,
+    "redis": RedisClient,
 }
 
 
@@ -206,6 +209,22 @@ def get_args() -> Namespace:
     )
     nats_arg_grp.add_argument("--servers", type=str)
 
+    redis_arg_grp = parser.add_argument_group(
+        "redis client",
+        "Redis source related parameters",
+    )
+    redis_arg_grp.add_argument(
+        "--url",
+        type=str,
+        help="Redis URL, e.g. redis://localhost:6379/0",
+    )
+    redis_arg_grp.add_argument(
+        "--mode",
+        type=str,
+        choices=["pubsub", "stream"],
+        help="Redis transport: Pub/Sub channels or Streams (XADD/XREAD)",
+    )
+
     return parser.parse_args()
 
 
@@ -249,9 +268,9 @@ def get_valid_client(config: Config) -> Config:
     """Resolve the single active transport client in ``config``.
 
     Exactly one fully specified transport section (``file``, ``mqtt``,
-    ``kafka``, ``pulsar`` or ``nats``) must be present; that section is
-    moved into ``config.client``. A section whose required fields are not
-    all specified is treated as absent.
+    ``kafka``, ``pulsar``, ``nats`` or ``redis``) must be present; that
+    section is moved into ``config.client``. A section whose required
+    fields are not all specified is treated as absent.
 
     Args:
         config: The configuration whose client sections are inspected.

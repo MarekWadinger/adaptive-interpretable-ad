@@ -5,8 +5,11 @@ Actionable work queue for the detection service and research ideas.
 - **Service hardening (S1–S10)** — small, high-leverage fixes to the streaming
   service logic, found by review of [rpc_server.py](rpc_server.py),
   [rpc_client.py](rpc_client.py), [consumer.py](consumer.py),
-  [functions/streamz_tools.py](functions/streamz_tools.py),
-  [functions/model_persistence.py](functions/model_persistence.py).
+  [safeband/streamz_tools.py](safeband/streamz_tools.py),
+  [safeband/model_persistence.py](safeband/model_persistence.py).
+  S5, S6, S7 and S9 have since landed on `main` (see CHANGELOG 2.2.x–2.4.x).
+- **Transport modernization (T1–T7)** — findings from the broker review
+  that added the Redis transport; see the [table below](#transport-modernization).
 - **Research ideas (I1–I7)** — mapped to code and the ESwA paper in
   [IDEAS.md](IDEAS.md).
 
@@ -185,6 +188,83 @@ and self-describing. (Becomes moot once
 the payload a proper serialization boundary.)
 
 ---
+
+## Transport modernization
+
+Findings from reviewing the MQTT / Kafka / Pulsar / NATS paths while adding
+Redis (`[redis]` section, `from_redis` / `to_redis`, `consumer.query_redis`).
+
+| Code | Item | Type | Impact | Effort |
+|------|------|------|--------|--------|
+| T1 | streamz's built-in `from_mqtt` uses paho's deprecated v1 callback API | compat | High | Low |
+| T2 | Kafka path: `confluent-kafka` undeclared, sink publishes Python `repr` not JSON | bug | High | Low |
+| T3 | Pulsar sink schema cannot carry multivariate limits or `root_cause` | bug | Medium | Medium |
+| T4 | `consumer.py` query side lacks NATS / Kafka / Pulsar | usability | Medium | Low |
+| T5 | Retire `streamz` (and dead `streamz-pulsar`) behind an in-house pipeline | maintenance | Medium | High |
+| T6 | Fold `from_nats`/`to_nats` loop plumbing and message adapters into shared helpers | cleanup | Low | Low |
+| T7 | Output subject scheme `<prefix>anomaly` has no separator | usability | Low | Low (breaking) |
+
+### T1 — paho v1 callback API
+
+`paho-mqtt` 2.x emits `DeprecationWarning: Callback API version 1 is
+deprecated`; 3.x removes it. `to_mqtt` and `consumer.py` now construct
+`mqtt.Client(CallbackAPIVersion.VERSION2, ...)`, but the ingest side still
+goes through streamz's `Stream.from_mqtt`, which calls `mqtt.Client()` v1
+style and cannot be fixed from here. Ship an in-house `from_mqtt` on the
+`from_q` pattern used by `from_nats` / `from_redis` (a background paho
+network thread pushing `MQTTMessage` into the queue). That also removes
+the last streamz built-in source the service depends on (see T5).
+
+### T2 — Kafka path is not runnable as shipped
+
+`Stream.from_kafka` / `to_kafka` import `confluent_kafka` lazily, which is
+not in `pyproject.toml`, so a `[kafka]` config fails with `ImportError` on a
+clean install. The sink also publishes `str(x)` (a Python dict `repr`)
+rather than `json.dumps(x)`, which non-Python consumers cannot parse. Fix:
+declare `confluent-kafka` (or an optional-dependency group `kafka`), and
+serialise with `json.dumps` like the file sink does.
+
+### T3 — Pulsar sink schema
+
+`_sink_pulsar` declares `level_high` / `level_low` as `String` fields and
+has no `root_cause`, so multivariate results (per-signal dict limits) are
+stringified or dropped. Either fan out per signal the way `_fan_out` does
+for MQTT / NATS / Redis, or publish one JSON blob (`Bytes` schema).
+`pulsar-client` is an optional import while `streamz-pulsar` (last release
+2023-07) is a hard dependency; invert that or fold the source/sink in-house.
+
+### T4 — query side parity
+
+`consumer.py` dispatches only `FileClient`, `MQTTClient` and (now)
+`RedisClient`; the README's NATS example shows `consumer.py`, which
+exits silently for a `[nats]` config. Add `query_nats` on the same
+`_log_received` helper; Kafka / Pulsar likewise once T2 / T3 land.
+
+### T5 — streamz retirement path
+
+`streamz` shipped 0.6.5 (2025-12) and 0.6.6 (2026-04) after a three-year
+gap, so it installs on current Python / setuptools, but it is maintenance
+mode and `streamz-pulsar` is abandoned. The service uses a small surface:
+`Stream`, `Sink`, `from_q`, `from_iterable`, `map` / `accumulate` /
+`filter` / `sink`, and `register_api`. Once T1–T3 make every broker
+source and sink in-house, the core can be swapped for a ~150-line
+asyncio pipeline (or kept pinned `<1.0`) without touching the brokers.
+Not urgent while 0.6.x resolves; track upstream activity.
+
+### T6 — shared client plumbing
+
+`from_nats` and `to_nats` each spin up a thread with a private asyncio
+loop; extract a `_ClientLoop` helper. `NATSMessage` and `RedisMessage` are
+identical dataclasses satisfying `TopicMessage`; collapse them into one
+`BrokerMessage`.
+
+### T7 — output subject scheme
+
+Results publish to `<prefix>anomaly`, `<prefix>_DOL_high`, ... with no
+separator between prefix and suffix (`plant/anomaly` only when the prefix
+happens to end in `/`). A `<prefix>/anomaly` scheme would be conventional
+across MQTT, NATS and Redis, but changes every downstream subscriber, so
+gate it behind a config flag.
 
 ## Research ideas
 

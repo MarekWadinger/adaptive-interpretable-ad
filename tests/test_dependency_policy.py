@@ -31,7 +31,6 @@ NO_UPPER_CAP = {
     "scipy",
     "typing-extensions",
     "pandas-stubs",
-    "types-paho-mqtt",
     "streamz-pulsar",
 }
 # Capped to <next-major: this project calls APIs that break across the
@@ -44,6 +43,7 @@ REQUIRE_UPPER_CAP = {
     "streamz",
     "matplotlib",
     "plotly",
+    "redis",
 }
 # Pinned through [tool.uv.sources] (a VCS fork); the version range in
 # [project.dependencies] is not the controlling lever.
