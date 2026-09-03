@@ -246,15 +246,37 @@ def _as_str(value: str | bytes) -> str:
     return value.decode() if isinstance(value, bytes) else value
 
 
+def _as_bytes(value: object) -> bytes:
+    """Coerce a Redis payload to bytes.
+
+    redis-py hands back ``bytes`` by default but ``str`` with
+    ``decode_responses=True``, and Pub/Sub can carry ``int`` data; the
+    pipeline's :class:`TopicMessage` contract is ``bytes``.
+
+    Examples:
+    >>> _as_bytes(b"1.5"), _as_bytes("1.5"), _as_bytes(2)
+    (b'1.5', b'1.5', b'2')
+
+    """
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode()
+    return str(value).encode()
+
+
 def _stream_entry_payload(fields: dict) -> bytes:
     """Extract the message body from a Redis Stream entry's field map.
 
     Entries written by :class:`to_redis` carry the body under the ``data``
     field. Entries produced by other publishers fall back to their first
-    field value so foreign streams remain consumable.
+    field value so foreign streams remain consumable. The value is always
+    returned as ``bytes`` (see :func:`_as_bytes`).
 
     Examples:
     >>> _stream_entry_payload({b"data": b"1.5"})
+    b'1.5'
+    >>> _stream_entry_payload({"data": "1.5"})
     b'1.5'
     >>> _stream_entry_payload({b"value": b"2.5", b"unit": b"C"})
     b'2.5'
@@ -264,8 +286,29 @@ def _stream_entry_payload(fields: dict) -> bytes:
     """
     for key in (_REDIS_STREAM_FIELD, _REDIS_STREAM_FIELD.decode()):
         if key in fields:
-            return fields[key]
-    return next(iter(fields.values()), b"")
+            return _as_bytes(fields[key])
+    return _as_bytes(next(iter(fields.values()), b""))
+
+
+def _require_topics(topics: list[str]) -> list[str]:
+    """Reject an empty channel/stream list before it reaches Redis.
+
+    An empty list would make ``XREAD`` an invalid call in stream mode and
+    a no-op subscription that blocks forever in pubsub mode.
+
+    Examples:
+    >>> _require_topics(["a"])
+    ['a']
+    >>> _require_topics([])
+    Traceback (most recent call last):
+    ...
+    ValueError: at least one Redis channel/stream key is required
+
+    """
+    if not topics:
+        msg = "at least one Redis channel/stream key is required"
+        raise ValueError(msg)
+    return topics
 
 
 # One XREAD reply: ``[(stream, [(entry_id, {field: value}), ...]), ...]``.
@@ -874,7 +917,9 @@ class from_redis(from_q):
     ) -> None:
         """Store connection parameters and initialise the polling source."""
         self.url = url
-        self.channels = [topic] if isinstance(topic, str) else list(topic)
+        self.channels = _require_topics(
+            [topic] if isinstance(topic, str) else list(topic),
+        )
         self.mode = _check_redis_mode(mode)
         self.connect_kwargs = connect_kwargs or {}
         self.sleep_time = sleep_time
@@ -896,7 +941,7 @@ class from_redis(from_q):
         self.q.put(
             RedisMessage(
                 topic=_as_str(message["channel"]),
-                payload=message["data"],
+                payload=_as_bytes(message["data"]),
             ),
         )
 

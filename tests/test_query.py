@@ -317,6 +317,24 @@ class TestQueryRedis:
         assert seen_ids == [{"plant/a": "$"}, {"plant/a": b"1-0"}]
         assert caplog.text.count("Received message") == 2
 
+    def test_empty_topics_rejected(self) -> None:
+        """No topics fails fast instead of blocking on nothing."""
+        config = RedisClient(url="redis://localhost:6379/0")
+        with pytest.raises(ValueError, match="at least one"):
+            query_redis(config, [], client=MagicMock())
+
+    def test_pubsub_closes_on_error(self) -> None:
+        """The PubSub handle is closed even when the listen loop raises."""
+        client = MagicMock()
+        pubsub = client.pubsub.return_value
+        pubsub.listen.side_effect = RuntimeError("boom")
+        config = RedisClient(url="redis://localhost:6379/0")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            query_redis(config, ["x"], client=client)
+
+        pubsub.close.assert_called_once()
+
     def test_decrypts_with_receiver(
         self,
         monkeypatch: pytest.MonkeyPatch,

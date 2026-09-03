@@ -20,7 +20,9 @@ from safeband.encryption import (
 )
 from safeband.parse import get_params
 from safeband.streamz_tools import (
+    _as_bytes,
     _as_str,
+    _require_topics,
     _stream_entry_payload,
     _xread_batches,
 )
@@ -234,7 +236,11 @@ def query_redis(
             forever.
         block_ms: ``XREAD`` block timeout in stream mode.
 
+    Raises:
+        ValueError: If ``topics`` is empty.
+
     """
+    _require_topics(topics)
     own_client = client is None
     if client is None:
         client = redis.Redis.from_url(config.url)
@@ -246,21 +252,23 @@ def query_redis(
     try:
         if config.mode == "pubsub":
             pubsub = client.pubsub(ignore_subscribe_messages=True)
-            pubsub.subscribe(*topics)
-            logger.info("Subscribed to channels %s", topics)
-            for message in pubsub.listen():
-                if message.get("type") != "message":
-                    continue
-                _log_received(
-                    _as_str(message["channel"]),
-                    message["data"],
-                    receiver,
-                    _now(),
-                )
-                seen += 1
-                if _done():
-                    break
-            pubsub.close()
+            try:
+                pubsub.subscribe(*topics)
+                logger.info("Subscribed to channels %s", topics)
+                for message in pubsub.listen():
+                    if message.get("type") != "message":
+                        continue
+                    _log_received(
+                        _as_str(message["channel"]),
+                        _as_bytes(message["data"]),
+                        receiver,
+                        _now(),
+                    )
+                    seen += 1
+                    if _done():
+                        break
+            finally:
+                pubsub.close()
         else:
             last_ids: dict[KeyT, StreamIdT] = dict.fromkeys(topics, "$")
             logger.info("Tailing streams %s", topics)

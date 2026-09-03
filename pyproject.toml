@@ -17,7 +17,7 @@ dependencies = [
     "human-security>=1.0",
     "matplotlib<4.0.0",
     "nats-py<3.0.0",
-    "paho-mqtt<3.0.0",
+    "paho-mqtt>=2.0,<3.0.0",
     "pandas<3.0.0",
     "pydantic>=2,<3",
     "redis>=5.0,<9.0.0",

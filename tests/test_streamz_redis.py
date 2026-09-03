@@ -19,6 +19,7 @@ sys.path.insert(1, str(Path(__file__).parent.parent))
 import safeband.streamz_tools as st
 from safeband.streamz_tools import (
     RedisMessage,
+    _as_bytes,
     _check_redis_mode,
     _filt,
     _func,
@@ -84,6 +85,12 @@ class TestRedisHelpers:
         assert _stream_entry_payload({b"value": b"3", b"unit": b"C"}) == b"3"
         assert _stream_entry_payload({}) == b""
 
+    def test_decoded_responses_are_coerced_to_bytes(self) -> None:
+        """Str (decode_responses=True) and int payloads become bytes."""
+        assert _as_bytes("1.5") == b"1.5"
+        assert _as_bytes(7) == b"7"
+        assert _stream_entry_payload({"data": "1.5"}) == b"1.5"
+
 
 # --------------------------------------------------------------------------
 # Source
@@ -117,6 +124,20 @@ class TestFromRedisSource:
         """An unsupported mode fails fast instead of at start()."""
         with pytest.raises(ValueError, match="mode must be"):
             Stream.from_redis(url=URL, topic="x", mode="queue")
+
+    def test_empty_topics_rejected_at_construction(self) -> None:
+        """No channels/streams is a configuration error, not a hang."""
+        with pytest.raises(ValueError, match="at least one"):
+            Stream.from_redis(url=URL, topic=[])
+
+    def test_on_message_coerces_decoded_data_to_bytes(self) -> None:
+        """A decode_responses=True client's str data still yields bytes."""
+        source = Stream.from_redis(url=URL, topic="x")
+
+        source._on_message({"type": "message", "channel": "x", "data": "1"})
+
+        assert source.q.get_nowait() == RedisMessage(topic="x", payload=b"1")
+        source.stop()
 
     def test_on_message_enqueues_adapter_with_decoded_channel(self) -> None:
         """A Pub/Sub message dict is queued as a RedisMessage adapter."""
