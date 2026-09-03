@@ -1,3 +1,9 @@
+## 3.1.0 (2026-09-03)
+
+### Feat
+
+- add Redis transport (Pub/Sub and Streams) and review broker paths (#123)
+
 ## 3.0.0 (2026-06-19)
 
 ### BREAKING CHANGE
